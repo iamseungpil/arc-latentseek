@@ -16,7 +16,7 @@ from .code_parser import extract_code_elements, parse_code
 # Color mapping from BARC
 COLOR_MAP = {
     0: "Black", 1: "Blue", 2: "Red", 3: "Green", 4: "Yellow",
-    5: "Gray", 6: "Pink", 7: "Orange", 8: "Purple", 9: "Brown"
+    5: "Gray", 6: "Pink", 7: "Orange", 8: "Teal", 9: "Maroon"
 }
 
 
