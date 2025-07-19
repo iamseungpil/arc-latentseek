@@ -284,6 +284,8 @@ class ARCLatentSeekPipeline:
             
             if not execution_result.success:
                 logger.warning(f"Candidate {i+1} execution failed: {execution_result.error_messages}")
+                # Still track failed candidates for visualization
+                candidate_details.append((candidate, execution_result))
                 continue
                 
             # Evaluate with GLM
@@ -378,6 +380,30 @@ class ARCLatentSeekPipeline:
         # Prepare final result
         if best_solution is None:
             logger.error(f"No valid solution found for problem {problem.uid}")
+            
+            # Save error visualization with any attempted solutions
+            error_viz_path = None
+            if self.config.save_visualizations and candidate_details:
+                try:
+                    error_viz_path = os.path.join(
+                        self.visualizations_dir,
+                        f"{problem.uid}_failed.png"
+                    )
+                    # Use the first candidate's execution result (even if failed)
+                    first_candidate, first_exec = candidate_details[0]
+                    if first_exec and first_exec.output_grids:
+                        self.renderer.render_problem_with_output(
+                            problem,
+                            first_exec.output_grids,
+                            error_viz_path
+                        )
+                    else:
+                        # If no output grids, just render the problem
+                        self.renderer.render_arc_problem(problem, error_viz_path)
+                    logger.info(f"Saved failed attempt visualization to {error_viz_path}")
+                except Exception as e:
+                    logger.error(f"Failed to save error visualization: {e}")
+            
             return SolutionResult(
                 problem_id=problem.uid,
                 success=False,
@@ -386,7 +412,7 @@ class ARCLatentSeekPipeline:
                 best_reward=float('-inf'),
                 execution_accuracy=0.0,
                 evaluation_details={},
-                visualization_path=None,
+                visualization_path=error_viz_path,
                 time_taken=time.time() - start_time,
                 initial_success=False,
                 improved_by_latentseek=False,
