@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 import time
 import wandb
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .data import ARCDataLoader, ARCProblem
 from .generators import BARCGenerator, BARCOutput
@@ -71,6 +72,12 @@ class SolutionResult:
     visualization_path: Optional[str]
     time_taken: float
     
+    # Before/After improvement tracking
+    initial_success: bool = False  # Did any initial candidate succeed?
+    improved_by_latentseek: bool = False  # Did LatentSeek find a solution?
+    initial_best_accuracy: float = 0.0  # Best accuracy before optimization
+    final_best_accuracy: float = 0.0   # Best accuracy after optimization
+    
     def to_dict(self):
         return asdict(self)
 
@@ -121,6 +128,43 @@ class ARCLatentSeekPipeline:
         
         logger.info("Pipeline initialized successfully")
     
+    def _align_single_candidate(self, candidate_info):
+        """Align a single candidate (for parallel processing)"""
+        candidate, problem, candidate_idx = candidate_info
+        
+        if not self.config.enable_code_alignment or not self.code_aligner:
+            return candidate_idx, candidate, None
+            
+        try:
+            logger.info(f"Applying code alignment to candidate {candidate_idx+1}")
+            
+            # Align code
+            aligned_candidate = self.code_aligner.align_code(candidate, problem)
+            
+            # Analyze alignment quality
+            quality = None
+            if self.quality_analyzer:
+                quality = self.quality_analyzer.analyze_alignment_quality(
+                    original_code=candidate.code,
+                    aligned_code=aligned_candidate.code,
+                    original_description=candidate.description,
+                    aligned_description=aligned_candidate.description
+                )
+                
+                # Use aligned candidate if quality is good enough
+                if quality.improvement_score >= self.config.min_alignment_score:
+                    logger.info(f"Using aligned candidate {candidate_idx+1} (score: {quality.improvement_score:.1f})")
+                    return candidate_idx, aligned_candidate, quality
+                else:
+                    logger.warning(f"Alignment quality too low for candidate {candidate_idx+1} (score: {quality.improvement_score:.1f}), using original")
+                    return candidate_idx, candidate, quality
+            else:
+                return candidate_idx, aligned_candidate, quality
+                
+        except Exception as e:
+            logger.error(f"Alignment failed for candidate {candidate_idx+1}: {e}")
+            return candidate_idx, candidate, None
+    
     def _init_wandb(self):
         """Initialize WandB logging"""
         try:
@@ -162,44 +206,69 @@ class ARCLatentSeekPipeline:
         best_output = None
         best_execution = None
         
+        # Track before/after improvement
+        initial_best_accuracy = 0.0
+        initial_success = False
+        candidates_tried_count = 0
+        
         # Generate initial candidates
         logger.info(f"Generating {self.config.num_candidates} candidate solutions...")
+        barc_start_time = time.time()
         candidates = self.barc_generator.generate(
             problem,
             temperature=self.config.temperature,
             max_new_tokens=self.config.max_new_tokens,
             num_candidates=self.config.num_candidates
         )
+        barc_time = time.time() - barc_start_time
+        logger.info(f"BARC generation completed in {barc_time:.2f}s")
+        wandb.log({"barc_generation_time": barc_time})
         
-        # Evaluate each candidate
-        for i, candidate in enumerate(candidates):
-            logger.info(f"Evaluating candidate {i+1}/{len(candidates)}")
+        # Apply code alignment to candidates (sequential for memory safety)
+        aligned_candidates = candidates.copy()
+        if self.config.enable_code_alignment and self.code_aligner:
+            logger.info(f"Applying code alignment to {len(candidates)} candidates...")
+            alignment_start_time = time.time()
             
-            # Apply code alignment if enabled
-            if self.config.enable_code_alignment and self.code_aligner:
-                logger.info(f"Applying code alignment to candidate {i+1}")
-                
-                # Align code
-                aligned_candidate = self.code_aligner.align_code(candidate, problem)
-                
-                # Analyze alignment quality
-                if self.quality_analyzer:
-                    quality = self.quality_analyzer.analyze_alignment_quality(
-                        original_code=candidate.code,
-                        aligned_code=aligned_candidate.code,
-                        original_description=candidate.description,
-                        aligned_description=aligned_candidate.description
-                    )
+            for i, candidate in enumerate(candidates):
+                try:
+                    logger.info(f"Applying code alignment to candidate {i+1}")
                     
-                    # Log alignment details
-                    self._log_alignment_details(problem.uid, i+1, candidate, aligned_candidate, quality)
+                    # Align code
+                    aligned_candidate = self.code_aligner.align_code(candidate, problem)
                     
-                    # Use aligned candidate if quality is good enough
-                    if quality.improvement_score >= self.config.min_alignment_score:
-                        logger.info(f"Using aligned candidate {i+1} (score: {quality.improvement_score:.1f})")
-                        candidate = aligned_candidate
+                    # Analyze alignment quality
+                    if self.quality_analyzer:
+                        quality = self.quality_analyzer.analyze_alignment_quality(
+                            original_code=candidate.code,
+                            aligned_code=aligned_candidate.code,
+                            original_description=candidate.description,
+                            aligned_description=aligned_candidate.description
+                        )
+                        
+                        # Log alignment details
+                        self._log_alignment_details(problem.uid, i+1, candidate, aligned_candidate, quality)
+                        
+                        # Use aligned candidate if quality is good enough
+                        if quality.improvement_score >= self.config.min_alignment_score:
+                            logger.info(f"Using aligned candidate {i+1} (score: {quality.improvement_score:.1f})")
+                            aligned_candidates[i] = aligned_candidate
+                        else:
+                            logger.warning(f"Alignment quality too low for candidate {i+1} (score: {quality.improvement_score:.1f}), using original")
                     else:
-                        logger.warning(f"Alignment quality too low for candidate {i+1} (score: {quality.improvement_score:.1f}), using original")
+                        aligned_candidates[i] = aligned_candidate
+                        
+                except Exception as e:
+                    logger.error(f"Alignment failed for candidate {i+1}: {e}")
+                    # Keep original candidate if alignment fails
+            
+            alignment_time = time.time() - alignment_start_time
+            logger.info(f"Sequential alignment completed in {alignment_time:.2f}s")
+            wandb.log({"alignment_time": alignment_time})
+        
+        # Evaluate each aligned candidate
+        for i, candidate in enumerate(aligned_candidates):
+            logger.info(f"Evaluating candidate {i+1}/{len(aligned_candidates)}")
             
             # Execute code
             execution_result = self.code_executor.execute(candidate.code, problem)
@@ -209,15 +278,26 @@ class ARCLatentSeekPipeline:
                 continue
                 
             # Evaluate with GLM
+            glm_start_time = time.time()
             evaluation_result = self.glm_evaluator.evaluate(
                 problem,
                 candidate,
                 execution_result,
                 f"temp_eval_{problem.uid}_candidate_{i}"
             )
+            glm_time = time.time() - glm_start_time
+            logger.info(f"GLM evaluation for candidate {i+1} completed in {glm_time:.2f}s")
+            wandb.log({f"glm_evaluation_time_candidate_{i+1}": glm_time})
             
             logger.info(f"Candidate {i+1} - Accuracy: {execution_result.accuracy:.2%}, "
                        f"Reward: {evaluation_result.total_reward:.3f}")
+            
+            # Track initial performance (before optimization)
+            candidates_tried_count += 1
+            if execution_result.accuracy > initial_best_accuracy:
+                initial_best_accuracy = execution_result.accuracy
+            if evaluation_result.total_reward >= 1.0:  # Perfect solution
+                initial_success = True
             
             # Log detailed information
             self._log_candidate_details(problem.uid, i+1, candidate, execution_result, evaluation_result, "initial")
@@ -312,9 +392,13 @@ class ARCLatentSeekPipeline:
                 final_viz_path
             )
         
+        # Calculate final tracking metrics
+        final_best_accuracy = best_execution.accuracy
+        improved_by_latentseek = (final_best_accuracy > initial_best_accuracy) and not initial_success
+        
         return SolutionResult(
             problem_id=problem.uid,
-            success=best_execution.accuracy > 0.99,
+            success=best_execution.accuracy >= 1.0,  # Binary success
             best_code=best_solution.code,
             best_description=best_solution.description or "",
             best_reward=best_reward,
@@ -325,7 +409,12 @@ class ARCLatentSeekPipeline:
                 'feedback': best_output.detailed_feedback
             },
             visualization_path=final_viz_path,
-            time_taken=time.time() - start_time
+            time_taken=time.time() - start_time,
+            # Before/after improvement tracking
+            initial_success=initial_success,
+            improved_by_latentseek=improved_by_latentseek,
+            initial_best_accuracy=initial_best_accuracy,
+            final_best_accuracy=final_best_accuracy
         )
     
     def solve_problems(self, 
@@ -393,33 +482,58 @@ class ARCLatentSeekPipeline:
         return results
     
     def _save_results(self, results: List[SolutionResult]):
-        """Save results to JSON file"""
-        output_path = os.path.join(self.config.output_dir, "results.json")
+        """Save results to JSON file with timestamp"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        output_path = os.path.join(self.config.output_dir, f"results_{timestamp}.json")
         
         with open(output_path, 'w') as f:
             json.dump([r.to_dict() for r in results], f, indent=2)
             
         logger.info(f"Results saved to {output_path}")
         
-        # Also save summary
+        # Also save summary with improvement statistics
+        total_problems = len(results)
+        successful = sum(1 for r in results if r.success)
+        initial_successes = sum(1 for r in results if r.initial_success)
+        improved_by_latentseek = sum(1 for r in results if r.improved_by_latentseek)
+        
         summary = {
-            'total_problems': len(results),
-            'successful': sum(1 for r in results if r.success),
+            'timestamp': timestamp,
+            'total_problems': total_problems,
+            'successful': successful,
+            'success_rate': successful / total_problems if total_problems > 0 else 0,
+            'initial_successes': initial_successes,
+            'initial_success_rate': initial_successes / total_problems if total_problems > 0 else 0,
+            'improved_by_latentseek': improved_by_latentseek,
+            'latentseek_improvement_rate': improved_by_latentseek / total_problems if total_problems > 0 else 0,
             'average_accuracy': sum(r.execution_accuracy for r in results) / len(results) if results else 0,
+            'average_initial_accuracy': sum(r.initial_best_accuracy for r in results) / len(results) if results else 0,
+            'average_final_accuracy': sum(r.final_best_accuracy for r in results) / len(results) if results else 0,
             'average_reward': sum(r.best_reward for r in results) / len(results) if results else 0,
             'average_time': sum(r.time_taken for r in results) / len(results) if results else 0
         }
         
-        summary_path = os.path.join(self.config.output_dir, "summary.json")
+        summary_path = os.path.join(self.config.output_dir, f"summary_{timestamp}.json")
         with open(summary_path, 'w') as f:
             json.dump(summary, f, indent=2)
             
         logger.info(f"Summary saved to {summary_path}")
+        
+        # Keep latest links for convenience
+        latest_results = os.path.join(self.config.output_dir, "results_latest.json")
+        latest_summary = os.path.join(self.config.output_dir, "summary_latest.json")
+        
+        import shutil
+        shutil.copy2(output_path, latest_results)
+        shutil.copy2(summary_path, latest_summary)
+        logger.info(f"Latest links created: {latest_results}, {latest_summary}")
     
     def _log_candidate_details(self, problem_id: str, candidate_num: int, 
                               barc_output: BARCOutput, execution_result: ExecutionResult,
                               evaluation_result: EvaluationResult, stage: str):
-        """Log detailed candidate information to WandB"""
+        """Log detailed candidate information to WandB and local files"""
         try:
             # Log BARC response details
             wandb.log({
@@ -430,7 +544,44 @@ class ARCLatentSeekPipeline:
                 f"{stage}_candidate_{candidate_num}_description": barc_output.description or "",
                 f"{stage}_candidate_{candidate_num}_code_length": len(barc_output.code),
                 f"{stage}_candidate_{candidate_num}_success": execution_result.success,
+                f"{stage}_candidate_{candidate_num}_code": barc_output.code,  # Add full code to WandB
             })
+            
+            # Save detailed logs to local files for debugging
+            os.makedirs(f"{self.config.output_dir}/logs", exist_ok=True)
+            log_file = f"{self.config.output_dir}/logs/{problem_id}_{stage}_candidate_{candidate_num}.txt"
+            
+            with open(log_file, "w") as f:
+                f.write(f"=== {stage.upper()} CANDIDATE {candidate_num} ===\n")
+                f.write(f"Problem ID: {problem_id}\n")
+                f.write(f"Success: {execution_result.success}\n")
+                f.write(f"Accuracy: {execution_result.accuracy:.4f}\n")
+                f.write(f"Reward: {evaluation_result.total_reward:.4f}\n")
+                f.write(f"Code Length: {len(barc_output.code)}\n\n")
+                
+                f.write("=== CONCEPTS ===\n")
+                f.write(f"{barc_output.concepts or 'None'}\n\n")
+                
+                f.write("=== DESCRIPTION ===\n")
+                f.write(f"{barc_output.description or 'None'}\n\n")
+                
+                f.write("=== FULL CODE ===\n")
+                f.write(f"{barc_output.code}\n\n")
+                
+                f.write("=== RAW RESPONSE ===\n")
+                f.write(f"{barc_output.raw_response}\n\n")
+                
+                if execution_result.error_messages:
+                    f.write("=== EXECUTION ERRORS ===\n")
+                    for error in execution_result.error_messages:
+                        f.write(f"{error}\n")
+                    f.write("\n")
+                
+                f.write("=== EVALUATION FEEDBACK ===\n")
+                for name, feedback in evaluation_result.detailed_feedback.items():
+                    f.write(f"{name}: {feedback}\n")
+            
+            logger.info(f"Detailed logs saved to: {log_file}")
             
             # Log component scores
             for component, score in evaluation_result.component_scores.items():

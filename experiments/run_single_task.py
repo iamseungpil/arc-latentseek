@@ -74,11 +74,20 @@ def main():
     if result.visualization_path:
         print(f"\nVisualization saved to: {result.visualization_path}")
     
-    # Save detailed result
-    detailed_path = os.path.join(config.output_dir, f"{problem.uid}_detailed.json")
+    # Save detailed result with timestamp
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    detailed_path = os.path.join(config.output_dir, f"{problem.uid}_detailed_{timestamp}.json")
     with open(detailed_path, 'w') as f:
         json.dump(result.to_dict(), f, indent=2)
     print(f"\nDetailed results saved to: {detailed_path}")
+    
+    # Also save as latest for convenience
+    latest_path = os.path.join(config.output_dir, f"{problem.uid}_detailed_latest.json")
+    with open(latest_path, 'w') as f:
+        json.dump(result.to_dict(), f, indent=2)
+    print(f"Latest result link: {latest_path}")
     
     return 0 if result.success else 1
 

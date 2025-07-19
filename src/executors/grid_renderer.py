@@ -3,7 +3,7 @@ Grid rendering utilities for visualizing ARC problems
 """
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
@@ -321,3 +321,94 @@ class GridRenderer:
         
         img.save(output_path)
         return img
+    
+    def render_training_comparison(self, 
+                                  problem: ARCProblem,
+                                  execution_result,
+                                  output_path: str) -> str:
+        """
+        Render training examples with expected vs actual outputs for GLM evaluation
+        """
+        train_pairs = problem.train_pairs
+        output_grids = execution_result.output_grids
+        
+        padding = 30
+        gap = 80
+        row_gap = 50
+        uniform_grid_size = 200
+        
+        # Calculate optimal cell size
+        all_grids = []
+        for pair in train_pairs:
+            all_grids.extend([pair.x, pair.y])
+        all_grids.extend([grid for grid in output_grids if isinstance(grid, np.ndarray)])
+        
+        max_grid_h = max(len(grid) for grid in all_grids if isinstance(grid, np.ndarray))
+        max_grid_w = max(len(grid[0]) for grid in all_grids if isinstance(grid, np.ndarray) and len(grid) > 0)
+        
+        unified_cell_size = min(uniform_grid_size // max_grid_h, 
+                               uniform_grid_size // max_grid_w)
+        unified_cell_size = max(unified_cell_size, 8)
+        
+        # Calculate text size based on grid size
+        font_size = max(24, uniform_grid_size // 10)
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+        except:
+            font = ImageFont.load_default()
+        
+        # Layout: 3 columns (input, expected, actual) x num_training_pairs rows
+        num_rows = len(train_pairs)
+        total_width = 3 * uniform_grid_size + 2 * gap + 2 * padding
+        total_height = num_rows * (uniform_grid_size + 80) + (num_rows - 1) * row_gap + 2 * padding
+        
+        # Create image
+        img = Image.new('RGB', (total_width, total_height), 'white')
+        draw = ImageDraw.Draw(img)
+        
+        # Draw header
+        header_y = 10
+        draw.text((padding, header_y), "INPUT", font=font, fill='black')
+        draw.text((padding + uniform_grid_size + gap, header_y), "EXPECTED", font=font, fill='blue')
+        draw.text((padding + 2 * (uniform_grid_size + gap), header_y), "ACTUAL", font=font, fill='red')
+        
+        # Draw training examples
+        for i, pair in enumerate(train_pairs):
+            y_offset = padding + 40 + i * (uniform_grid_size + 80 + row_gap)
+            
+            # Draw input
+            self._draw_grid_centered(draw, pair.x, 
+                                   padding, y_offset,
+                                   uniform_grid_size, unified_cell_size)
+            
+            # Draw expected output
+            x_expected = padding + uniform_grid_size + gap
+            self._draw_grid_centered(draw, pair.y,
+                                   x_expected, y_offset,
+                                   uniform_grid_size, unified_cell_size)
+            
+            # Draw actual output
+            x_actual = padding + 2 * (uniform_grid_size + gap)
+            if i < len(output_grids) and isinstance(output_grids[i], np.ndarray):
+                self._draw_grid_centered(draw, output_grids[i],
+                                       x_actual, y_offset,
+                                       uniform_grid_size, unified_cell_size)
+                
+                # Check if they match
+                if np.array_equal(pair.y, output_grids[i]):
+                    status_text = "✅ MATCH"
+                    status_color = 'green'
+                else:
+                    status_text = "❌ MISMATCH"
+                    status_color = 'red'
+                    
+                draw.text((x_actual, y_offset + uniform_grid_size + 10), 
+                         status_text, font=font, fill=status_color)
+            else:
+                # Draw error message
+                error_text = "ERROR"
+                draw.text((x_actual + uniform_grid_size//4, y_offset + uniform_grid_size//2), 
+                         error_text, font=font, fill='red')
+        
+        img.save(output_path)
+        return output_path

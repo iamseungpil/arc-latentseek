@@ -3,11 +3,13 @@ BARC Model Wrapper for Code Generation
 """
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 import numpy as np
 import re
+
+# Using unsloth for optimization with transformers fallback
 
 from ..data import ARCProblem
 from .code_parser import extract_code_elements, parse_code
@@ -44,20 +46,56 @@ class BARCGenerator:
         self._load_model()
         
     def _load_model(self):
-        """Load BARC model and tokenizer"""
+        """Load BARC model with unsloth optimization"""
         print(f"Loading BARC model: {self.model_name}")
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_name,
-            torch_dtype=torch.bfloat16,
-            device_map="auto"
-        )
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        
+        # Try unsloth first, fallback to standard transformers
+        try:
+            from unsloth import FastLanguageModel
+            print("Attempting to load with unsloth optimization...")
+            
+            self.model, self.tokenizer = FastLanguageModel.from_pretrained(
+                model_name=self.model_name,
+                max_seq_length=4096,
+                dtype=torch.bfloat16,
+                load_in_4bit=False,  # Use bfloat16 instead of 4bit for better quality
+                device_map="auto"
+            )
+            
+            # Enable fast inference mode
+            FastLanguageModel.for_inference(self.model)
+            print("✅ BARC model loaded with unsloth optimization")
+            
+        except Exception as e:
+            print(f"⚠️ Unsloth loading failed: {e}")
+            print("Falling back to standard transformers...")
+            
+            # Fallback to standard transformers
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                low_cpu_mem_usage=True,
+                attn_implementation="eager",  # Disable flash attention to avoid compatibility issues
+            )
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            
+            # Enable optimizations
+            self.model.eval()
+            
+            # Compile model for faster inference (PyTorch 2.0+)
+            if hasattr(torch, 'compile'):
+                try:
+                    print("Compiling model for faster inference...")
+                    self.model = torch.compile(self.model, mode="reduce-overhead")
+                    print("Model compilation successful")
+                except Exception as e:
+                    print(f"Model compilation failed: {e}, continuing without compilation")
         
         # Set padding token if not present
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             
-        self.model.eval()
         print("BARC model loaded successfully")
         
     def _grid_to_string(self, grid: np.ndarray) -> str:
@@ -129,24 +167,26 @@ class BARCGenerator:
         
         outputs = []
         
-        for _ in range(num_candidates):
-            # Generate
-            with torch.no_grad():
-                output = self.model.generate(
-                    **inputs,
-                    temperature=temperature,
-                    top_p=0.95,
-                    top_k=50,
-                    max_new_tokens=max_new_tokens,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                )
-            
+        # Batch generation for efficiency
+        with torch.no_grad():
+            batch_outputs = self.model.generate(
+                **inputs,
+                temperature=temperature,
+                top_p=0.95,
+                top_k=50,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                num_return_sequences=num_candidates,  # Generate all candidates at once
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
+        
+        # Process each generated sequence
+        input_len = inputs.input_ids.shape[1]
+        for i in range(num_candidates):
             # Decode
-            input_len = inputs.input_ids.shape[1]
             response = self.tokenizer.decode(
-                output[0][input_len:], 
+                batch_outputs[i][input_len:], 
                 skip_special_tokens=True
             )
             

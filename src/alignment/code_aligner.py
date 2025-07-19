@@ -3,11 +3,13 @@ BARC Code Aligner using Llama3.1-8B Instruct
 """
 
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from typing import Optional, Dict, Any
 import logging
 import re
 import time
+
+# Using unsloth for optimization with transformers fallback
 
 from ..data import ARCProblem
 from ..generators import BARCOutput
@@ -48,17 +50,52 @@ class BARCCodeAligner:
         self._load_model()
         
     def _load_model(self):
-        """Load Llama3.1-8B Instruct model"""
+        """Load Llama3.1-8B Instruct model with unsloth optimization"""
         try:
             logger.info(f"Loading alignment model: {self.model_path}")
             
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_path,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
-                attn_implementation="flash_attention_2" if torch.cuda.is_available() else None
-            )
+            # Try unsloth first, fallback to standard transformers
+            try:
+                from unsloth import FastLanguageModel
+                logger.info("Attempting to load alignment model with unsloth optimization...")
+                
+                self.model, self.tokenizer = FastLanguageModel.from_pretrained(
+                    model_name=self.model_path,
+                    max_seq_length=4096,
+                    dtype=torch.bfloat16,
+                    load_in_4bit=False,  # Use bfloat16 for better quality
+                    device_map="auto"
+                )
+                
+                # Enable fast inference mode
+                FastLanguageModel.for_inference(self.model)
+                logger.info("✅ Alignment model loaded with unsloth optimization")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Unsloth loading failed: {e}")
+                logger.info("Falling back to standard transformers...")
+                
+                # Fallback to standard transformers
+                self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    self.model_path,
+                    torch_dtype=torch.bfloat16,
+                    device_map="auto",
+                    low_cpu_mem_usage=True,
+                    attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager",
+                )
+                
+                # Enable optimizations for faster inference
+                self.model.eval()
+                
+                # Compile model for faster inference (PyTorch 2.0+)
+                if hasattr(torch, 'compile'):
+                    try:
+                        logger.info("Compiling alignment model for faster inference...")
+                        self.model = torch.compile(self.model, mode="reduce-overhead")
+                        logger.info("Alignment model compilation successful")
+                    except Exception as e:
+                        logger.warning(f"Alignment model compilation failed: {e}, continuing without compilation")
             
             # Set padding token
             if self.tokenizer.pad_token is None:
@@ -229,6 +266,13 @@ from common import *
                 # Fallback: use the whole response
                 aligned_code = response.strip()
         
+        # Validate Python syntax before proceeding
+        try:
+            compile(aligned_code, '<string>', 'exec')
+        except SyntaxError as e:
+            logger.warning(f"Aligned code has syntax error: {e}, using original")
+            return original_output
+        
         # Extract concepts and description from aligned code
         concepts = self._extract_concepts(aligned_code)
         description = self._extract_description(aligned_code)
@@ -243,6 +287,7 @@ from common import *
             code=aligned_code,
             concepts=concepts,
             description=description,
+            plan=original_output.plan,  # Preserve original plan
             raw_response=response
         )
     

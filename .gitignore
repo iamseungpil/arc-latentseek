@@ -64,6 +64,14 @@ temp_*
 wandb/
 .wandb/
 
+# Logs
+*.log
+logs/
+experiment_log_*.txt
+
+# Cache
+unsloth_compiled_cache/
+
 # Model files
 models/
 checkpoints/
