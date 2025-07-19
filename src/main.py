@@ -839,7 +839,7 @@ class ARCLatentSeekPipeline:
                 "step_outputs": [
                     {
                         "step": i,
-                        "code": output.code[:500] + "..." if len(output.code) > 500 else output.code,
+                        "code": output.code,  # Full code without truncation
                         "description": output.description,
                         "reward": optimization_result.reward_history[i] if i < len(optimization_result.reward_history) else None,
                         "accuracy": optimization_result.accuracy_history[i] if i < len(optimization_result.accuracy_history) else None
@@ -852,6 +852,20 @@ class ARCLatentSeekPipeline:
                 json.dump(optimization_data, f, indent=2)
             
             logger.info(f"Saved LatentSeek optimization log to: {log_file}")
+            
+            # Also save individual step files for easier analysis
+            step_dir = os.path.join(optimization_log_dir, f"{problem_id}_candidate_{candidate_num}_steps")
+            os.makedirs(step_dir, exist_ok=True)
+            
+            for i, output in enumerate(optimization_result.all_outputs):
+                step_file = os.path.join(step_dir, f"step_{i:02d}.py")
+                with open(step_file, 'w') as f:
+                    f.write(f"# Step {i} - Reward: {optimization_result.reward_history[i] if i < len(optimization_result.reward_history) else 'N/A'}\n")
+                    f.write(f"# Accuracy: {optimization_result.accuracy_history[i] if i < len(optimization_result.accuracy_history) else 'N/A'}\n")
+                    f.write(f"# Description: {output.description}\n\n")
+                    f.write(output.code)
+            
+            logger.info(f"Saved individual step files to: {step_dir}")
                 
         except Exception as e:
             logger.warning(f"Failed to log optimization history: {e}")

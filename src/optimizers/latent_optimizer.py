@@ -398,10 +398,12 @@ class LatentSeekOptimizer:
             logger.info(f"Step {step + 1}: reward = {new_reward:.3f}, accuracy = {execution_result.accuracy:.2%}")
             
             # Log the code changes
-            logger.info(f"Step {step + 1} generated code preview (first 200 chars):")
-            logger.info(f"{new_output.code[:200]}...")
+            logger.info(f"Step {step + 1} generated code:")
+            logger.info(f"{'='*80}")
+            logger.info(new_output.code)
+            logger.info(f"{'='*80}")
             if new_output.description:
-                logger.info(f"Step {step + 1} description: {new_output.description[:100]}...")
+                logger.info(f"Step {step + 1} description: {new_output.description}")
             
             # Store output and accuracy
             all_outputs.append(new_output)
