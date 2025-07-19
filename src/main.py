@@ -49,7 +49,7 @@ class PipelineConfig:
     use_description_based_optimization: bool = True
     
     # Alignment settings
-    enable_code_alignment: bool = True
+    enable_code_alignment: bool = False  # Disabled - alignment is causing syntax errors
     alignment_model: str = "meta-llama/Llama-3.1-8B-Instruct"
     alignment_temperature: float = 0.3
     alignment_max_tokens: int = 2048

@@ -43,14 +43,14 @@ def run_full_experiment():
         use_description_based_optimization=True,
         
         # Alignment settings
-        enable_code_alignment=True,
+        enable_code_alignment=False,  # Disabled - causing syntax errors
         alignment_model="meta-llama/Llama-3.1-8B-Instruct",
         alignment_temperature=0.3,
         alignment_max_tokens=2048,
         min_alignment_score=20,
         
         # Output settings
-        output_dir="results/full_experiment",
+        output_dir=f"results/full_experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
         save_visualizations=True
     )
     
