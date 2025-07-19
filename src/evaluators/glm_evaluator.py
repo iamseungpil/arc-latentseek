@@ -110,12 +110,17 @@ class GLMEvaluator:
             for name, result in verifications.items()
         }
         
-        return EvaluationResult(
+        result = EvaluationResult(
             total_reward=total_reward,
             component_scores=component_scores,
             verifications=verifications,
             detailed_feedback=detailed_feedback
         )
+        
+        # Store the raw GLM response for debugging
+        result.glm_raw_response = getattr(self, '_last_glm_response', None)
+        
+        return result
     
     def _run_glm_verifications(self, 
                               image_path: str,
@@ -299,6 +304,9 @@ FEEDBACK: [Explain specifically why the generated outputs differ from expected o
         response = self._run_glm_inference_single_image(
             solution_result_path, prompt
         )
+        
+        # Store the raw response for debugging
+        self._last_glm_response = response
         
         # Parse the structured response
         verifications = self._parse_glm_structured_response(response)

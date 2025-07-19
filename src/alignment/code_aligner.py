@@ -130,6 +130,9 @@ class BARCCodeAligner:
         # Parse aligned response
         aligned_output = self._parse_aligned_response(aligned_response, barc_output)
         
+        # Add raw alignment response to output
+        aligned_output.alignment_response = aligned_response
+        
         alignment_time = time.time() - start_time
         
         logger.info(f"Code alignment completed in {alignment_time:.2f}s")

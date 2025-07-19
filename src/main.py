@@ -6,7 +6,7 @@ import os
 import json
 import logging
 from typing import Dict, List, Optional
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 import time
 from datetime import datetime
 import wandb
@@ -78,6 +78,11 @@ class SolutionResult:
     improved_by_latentseek: bool = False  # Did LatentSeek find a solution?
     initial_best_accuracy: float = 0.0  # Best accuracy before optimization
     final_best_accuracy: float = 0.0   # Best accuracy after optimization
+    
+    # Full responses for debugging
+    alignment_responses: Optional[List[Dict]] = field(default_factory=list)  # All alignment responses
+    glm_responses: Optional[List[Dict]] = field(default_factory=list)  # All GLM evaluation responses
+    barc_raw_responses: Optional[List[str]] = field(default_factory=list)  # All BARC raw responses
     
     def to_dict(self):
         return asdict(self)
@@ -220,6 +225,11 @@ class ARCLatentSeekPipeline:
         initial_success = False
         candidates_tried_count = 0
         
+        # Collect all responses for debugging
+        all_alignment_responses = []
+        all_glm_responses = []
+        all_barc_raw_responses = []
+        
         # Generate initial candidates
         logger.info(f"Generating {self.config.num_candidates} candidate solutions...")
         barc_start_time = time.time()
@@ -229,6 +239,10 @@ class ARCLatentSeekPipeline:
             max_new_tokens=self.config.max_new_tokens,
             num_candidates=self.config.num_candidates
         )
+        
+        # Collect BARC raw responses
+        for candidate in candidates:
+            all_barc_raw_responses.append(candidate.raw_response)
         barc_time = time.time() - barc_start_time
         logger.info(f"BARC generation completed in {barc_time:.2f}s")
         wandb.log({"barc_generation_time": barc_time})
@@ -245,6 +259,13 @@ class ARCLatentSeekPipeline:
                     
                     # Align code
                     aligned_candidate = self.code_aligner.align_code(candidate, problem)
+                    
+                    # Collect alignment response
+                    if hasattr(aligned_candidate, 'alignment_response'):
+                        all_alignment_responses.append({
+                            "candidate": i+1,
+                            "response": aligned_candidate.alignment_response
+                        })
                     
                     # Analyze alignment quality
                     if self.quality_analyzer:
@@ -299,6 +320,13 @@ class ARCLatentSeekPipeline:
             glm_time = time.time() - glm_start_time
             logger.info(f"GLM evaluation for candidate {i+1} completed in {glm_time:.2f}s")
             wandb.log({f"glm_evaluation_time_candidate_{i+1}": glm_time})
+            
+            # Collect GLM response
+            if hasattr(evaluation_result, 'glm_raw_response'):
+                all_glm_responses.append({
+                    "candidate": i+1,
+                    "response": evaluation_result.glm_raw_response
+                })
             
             logger.info(f"Candidate {i+1} - Accuracy: {execution_result.accuracy:.2%}, "
                        f"Reward: {evaluation_result.total_reward:.3f}")
@@ -435,7 +463,11 @@ class ARCLatentSeekPipeline:
                 initial_success=False,
                 improved_by_latentseek=False,
                 initial_best_accuracy=0.0,
-                final_best_accuracy=0.0
+                final_best_accuracy=0.0,
+                # Full responses
+                alignment_responses=all_alignment_responses,
+                glm_responses=all_glm_responses,
+                barc_raw_responses=all_barc_raw_responses
             )
         
         # Save best visualization
@@ -494,7 +526,11 @@ class ARCLatentSeekPipeline:
             initial_success=initial_success,
             improved_by_latentseek=improved_by_latentseek,
             initial_best_accuracy=initial_best_accuracy,
-            final_best_accuracy=final_best_accuracy
+            final_best_accuracy=final_best_accuracy,
+            # Full responses
+            alignment_responses=all_alignment_responses,
+            glm_responses=all_glm_responses,
+            barc_raw_responses=all_barc_raw_responses
         )
     
     def solve_problems(self, 
