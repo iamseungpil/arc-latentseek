@@ -29,6 +29,9 @@ class Color:
     ORANGE = 7
     TEAL = 8
     MAROON = 9
+    # BARC compatibility aliases
+    PURPLE = 8  # BARC uses PURPLE instead of TEAL
+    BROWN = 9   # BARC uses BROWN instead of MAROON
     TRANSPARENT = 0 # sometimes the language model likes to pretend that there is something called transparent/background, and black is a reasonable default
     BACKGROUND = 0
 
