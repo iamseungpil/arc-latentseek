@@ -75,9 +75,13 @@ class GridRenderer:
         max_grid_h = max(len(grid) for grid in all_grids)
         max_grid_w = max(len(grid[0]) for grid in all_grids)
         
+        # Calculate cell size with better minimum
         unified_cell_size = min(uniform_grid_size // max_grid_h, 
                                uniform_grid_size // max_grid_w)
-        unified_cell_size = max(unified_cell_size, 8)
+        # Ensure minimum readable cell size
+        unified_cell_size = max(unified_cell_size, 12)
+        # Cap maximum cell size to prevent huge grids for small problems
+        unified_cell_size = min(unified_cell_size, 25)
         
         # Layout: 2 grids side by side (test input -> generated output)
         total_width = 2 * uniform_grid_size + gap + 2 * padding
@@ -91,14 +95,20 @@ class GridRenderer:
         self._draw_grid_centered(draw, test_input,
                                padding, padding + 30,
                                uniform_grid_size, unified_cell_size)
-        draw.text((padding, padding), "Test Input", fill='black')
+        # Load font for labels
+        try:
+            label_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+        except:
+            label_font = ImageFont.load_default()
+            
+        draw.text((padding, padding), "Test Input", fill='black', font=label_font)
         
         # Draw generated output
         output_x = padding + uniform_grid_size + gap
         self._draw_grid_centered(draw, generated_output,
                                output_x, padding + 30,
                                uniform_grid_size, unified_cell_size)
-        draw.text((output_x, padding), "Generated Output", fill='green')
+        draw.text((output_x, padding), "Generated Output", fill='green', font=label_font)
         
         img.save(output_path)
         return output_path
@@ -108,10 +118,10 @@ class GridRenderer:
         train_examples = problem_data['train']
         test_input = problem_data['test'][0]['input'] if problem_data['test'] and include_test else None
         
-        padding = 20
-        gap = 60
-        row_gap = 80
-        uniform_grid_size = 240
+        padding = 40
+        gap = 100
+        row_gap = 100
+        uniform_grid_size = 250
         
         # Collect all grids for sizing
         all_grids = []
@@ -124,9 +134,13 @@ class GridRenderer:
         max_grid_h = max(len(grid) for grid in all_grids)
         max_grid_w = max(len(grid[0]) for grid in all_grids)
         
+        # Calculate cell size with better minimum
         unified_cell_size = min(uniform_grid_size // max_grid_h, 
                                uniform_grid_size // max_grid_w)
-        unified_cell_size = max(unified_cell_size, 8)
+        # Ensure minimum readable cell size
+        unified_cell_size = max(unified_cell_size, 12)
+        # Cap maximum cell size to prevent huge grids for small problems
+        unified_cell_size = min(unified_cell_size, 25)
         
         # Layout: 2 grids per row (input-output pairs), with test input on last row if included
         num_rows = len(train_examples) + (1 if test_input is not None else 0)
@@ -160,7 +174,7 @@ class GridRenderer:
             self._draw_grid_centered(draw, np.array(test_input),
                                    padding, test_y_offset + 30,
                                    uniform_grid_size, unified_cell_size)
-            draw.text((padding, test_y_offset), "Test Input", fill='blue')
+            draw.text((padding, test_y_offset), "Test Input", fill='blue', font=label_font)
         
         img.save(output_path)
         return output_path
@@ -183,10 +197,10 @@ class GridRenderer:
         train_examples = problem.train_pairs
         test_input = problem.test_pairs[0].x if problem.test_pairs else None
         
-        padding = 20
-        gap = 60
-        row_gap = 80
-        uniform_grid_size = 240
+        padding = 40
+        gap = 100
+        row_gap = 100
+        uniform_grid_size = 250
         
         # Collect all grids for sizing
         all_grids = []
@@ -201,9 +215,13 @@ class GridRenderer:
         max_grid_h = max(len(grid) for grid in all_grids if isinstance(grid, np.ndarray))
         max_grid_w = max(len(grid[0]) for grid in all_grids if isinstance(grid, np.ndarray) and len(grid) > 0)
         
+        # Calculate cell size with better minimum
         unified_cell_size = min(uniform_grid_size // max_grid_h, 
                                uniform_grid_size // max_grid_w)
-        unified_cell_size = max(unified_cell_size, 8)
+        # Ensure minimum readable cell size
+        unified_cell_size = max(unified_cell_size, 12)
+        # Cap maximum cell size to prevent huge grids for small problems
+        unified_cell_size = min(unified_cell_size, 25)
         
         # Layout: 3 grids per row (input, expected output, generated output)
         num_rows = len(train_examples) + (1 if test_input is not None else 0)
@@ -214,6 +232,12 @@ class GridRenderer:
         img = Image.new('RGB', (total_width, total_height), 'white')
         draw = ImageDraw.Draw(img)
         
+        # Load font for labels
+        try:
+            label_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+        except:
+            label_font = ImageFont.load_default()
+        
         # Draw training examples
         for i, pair in enumerate(train_examples):
             y_offset = padding + i * (uniform_grid_size + 30 + row_gap)
@@ -222,14 +246,14 @@ class GridRenderer:
             self._draw_grid_centered(draw, pair.x, 
                                    padding, y_offset + 30,
                                    uniform_grid_size, unified_cell_size)
-            draw.text((padding, y_offset), f"Input {i+1}", fill='black')
+            draw.text((padding, y_offset), f"Input {i+1}", fill='black', font=label_font)
             
             # Draw expected output
             x_expected = padding + uniform_grid_size + gap
             self._draw_grid_centered(draw, pair.y,
                                    x_expected, y_offset + 30,
                                    uniform_grid_size, unified_cell_size)
-            draw.text((x_expected, y_offset), f"Expected Output {i+1}", fill='black')
+            draw.text((x_expected, y_offset), f"Expected Output {i+1}", fill='black', font=label_font)
             
             # Draw generated output
             x_generated = padding + 2 * (uniform_grid_size + gap)
@@ -237,12 +261,12 @@ class GridRenderer:
                 self._draw_grid_centered(draw, generated_outputs[i],
                                        x_generated, y_offset + 30,
                                        uniform_grid_size, unified_cell_size)
-                draw.text((x_generated, y_offset), f"Generated Output {i+1}", fill='green')
+                draw.text((x_generated, y_offset), f"Generated Output {i+1}", fill='green', font=label_font)
             else:
                 # Draw error message
                 draw.text((x_generated + 10, y_offset + uniform_grid_size // 2), 
-                         "ERROR", fill='red')
-                draw.text((x_generated, y_offset), f"Generated Output {i+1}", fill='red')
+                         "ERROR", fill='red', font=label_font)
+                draw.text((x_generated, y_offset), f"Generated Output {i+1}", fill='red', font=label_font)
         
         # Draw test input if present
         if test_input is not None:
@@ -250,7 +274,7 @@ class GridRenderer:
             self._draw_grid_centered(draw, test_input,
                                    padding, test_y_offset + 30,
                                    uniform_grid_size, unified_cell_size)
-            draw.text((padding, test_y_offset), "Test Input", fill='blue')
+            draw.text((padding, test_y_offset), "Test Input", fill='blue', font=label_font)
         
         # Save image
         img.save(output_path)
@@ -332,10 +356,10 @@ class GridRenderer:
         train_pairs = problem.train_pairs
         output_grids = execution_result.output_grids
         
-        padding = 30
-        gap = 80
-        row_gap = 50
-        uniform_grid_size = 200
+        padding = 40
+        gap = 100
+        row_gap = 80
+        uniform_grid_size = 250  # Increased grid size for better visibility
         
         # Calculate optimal cell size
         all_grids = []
@@ -346,35 +370,48 @@ class GridRenderer:
         max_grid_h = max(len(grid) for grid in all_grids if isinstance(grid, np.ndarray))
         max_grid_w = max(len(grid[0]) for grid in all_grids if isinstance(grid, np.ndarray) and len(grid) > 0)
         
+        # Calculate cell size with better minimum
         unified_cell_size = min(uniform_grid_size // max_grid_h, 
                                uniform_grid_size // max_grid_w)
-        unified_cell_size = max(unified_cell_size, 8)
+        # Ensure minimum readable cell size
+        unified_cell_size = max(unified_cell_size, 12)
+        # Cap maximum cell size to prevent huge grids for small problems
+        unified_cell_size = min(unified_cell_size, 25)
         
         # Calculate text size based on grid size
-        font_size = max(24, uniform_grid_size // 10)
+        font_size = max(36, uniform_grid_size // 6)  # Increased font size
+        header_font_size = max(48, uniform_grid_size // 4)  # Larger header font
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+            header_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", header_font_size)
         except:
-            font = ImageFont.load_default()
+            try:
+                # Try alternative font paths
+                font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", font_size)
+                header_font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", header_font_size)
+            except:
+                font = ImageFont.load_default()
+                header_font = ImageFont.load_default()
         
         # Layout: 3 columns (input, expected, actual) x num_training_pairs rows
         num_rows = len(train_pairs)
         total_width = 3 * uniform_grid_size + 2 * gap + 2 * padding
-        total_height = num_rows * (uniform_grid_size + 80) + (num_rows - 1) * row_gap + 2 * padding
+        header_height = 80  # Space for header text
+        total_height = header_height + num_rows * (uniform_grid_size + 80) + (num_rows - 1) * row_gap + 2 * padding
         
         # Create image
         img = Image.new('RGB', (total_width, total_height), 'white')
         draw = ImageDraw.Draw(img)
         
         # Draw header
-        header_y = 10
-        draw.text((padding, header_y), "INPUT", font=font, fill='black')
-        draw.text((padding + uniform_grid_size + gap, header_y), "EXPECTED", font=font, fill='blue')
-        draw.text((padding + 2 * (uniform_grid_size + gap), header_y), "ACTUAL", font=font, fill='red')
+        header_y = 20
+        draw.text((padding + uniform_grid_size // 4, header_y), "INPUT", font=header_font, fill='black')
+        draw.text((padding + uniform_grid_size + gap + uniform_grid_size // 6, header_y), "EXPECTED", font=header_font, fill='blue')
+        draw.text((padding + 2 * (uniform_grid_size + gap) + uniform_grid_size // 6, header_y), "ACTUAL", font=header_font, fill='red')
         
         # Draw training examples
         for i, pair in enumerate(train_pairs):
-            y_offset = padding + 40 + i * (uniform_grid_size + 80 + row_gap)
+            y_offset = header_height + padding + i * (uniform_grid_size + 80 + row_gap)
             
             # Draw input
             self._draw_grid_centered(draw, pair.x, 
