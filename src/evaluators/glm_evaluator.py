@@ -156,6 +156,9 @@ FEEDBACK: [Brief explanation]"""
         calc_result = self._run_glm_inference(image_path, calc_prompt)
         verifications['calculation_check'] = self._parse_verification_response(calc_result)
         
+        # Store last response
+        self._last_glm_response = calc_result
+        
         # 2. Answer Completeness Check
         complete_prompt = f"""{context}
 
@@ -318,7 +321,30 @@ FEEDBACK: [Explain specifically why the generated outputs differ from expected o
         messages = [
             {"role": "user", "content": prompt, "images": [image_path]}
         ]
-        return self._generate_glm_response(messages)
+        
+        inputs = self.processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+            padding=True,
+        ).to(self.model.device)
+        
+        output = self.model.generate(
+            **inputs,
+            max_new_tokens=512,
+            temperature=0.3,
+            do_sample=True,
+            top_k=10
+        )
+        
+        response = self.processor.decode(
+            output[0][inputs["input_ids"].shape[1]:],
+            skip_special_tokens=True
+        )
+        
+        return response
     
     def _run_glm_inference_dual_images(self, image1_path: str, image2_path: str, prompt: str) -> str:
         """Run GLM inference on two images with prompt"""
