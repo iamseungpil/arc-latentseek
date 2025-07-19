@@ -148,16 +148,6 @@ class LatentSeekOptimizer:
         for step in range(self.max_steps):
             logger.info(f"Optimization step {step + 1}/{self.max_steps}")
             
-            # Check convergence
-            if current_reward > self.reward_threshold:
-                logger.info(f"Converged at step {step + 1} with reward {current_reward:.3f}")
-                return OptimizationResult(
-                    final_output=current_output,
-                    reward_history=reward_history,
-                    optimization_steps=step + 1,
-                    converged=True
-                )
-            
             # Generate new output from optimized hidden states
             new_output = self._generate_from_optimized_states(
                 problem, optimized_hidden_states, hidden_states_list[update_length:]
@@ -380,16 +370,6 @@ class LatentSeekOptimizer:
         for step in range(self.max_steps):
             logger.info(f"Description optimization step {step + 1}/{self.max_steps}")
             
-            # Check convergence
-            if current_reward > self.reward_threshold:
-                logger.info(f"Converged at step {step + 1} with reward {current_reward:.3f}")
-                return OptimizationResult(
-                    final_output=current_output,
-                    reward_history=reward_history,
-                    optimization_steps=step + 1,
-                    converged=True
-                )
-            
             # Generate new output with optimized description states
             new_output = self._generate_with_optimized_description(
                 problem, optimized_desc_states, hidden_states_list, desc_start, desc_end
@@ -409,7 +389,17 @@ class LatentSeekOptimizer:
             new_reward = evaluation_result.total_reward
             reward_history.append(new_reward)
             
-            logger.info(f"Step {step + 1}: reward = {new_reward:.3f}")
+            logger.info(f"Step {step + 1}: reward = {new_reward:.3f}, accuracy = {execution_result.accuracy:.2%}")
+            
+            # Check if all training pairs are correct
+            if execution_result.accuracy >= 1.0:
+                logger.info(f"Perfect accuracy achieved at step {step + 1}!")
+                return OptimizationResult(
+                    final_output=new_output,
+                    reward_history=reward_history,
+                    optimization_steps=step + 1,
+                    converged=True
+                )
             
             # Update description states using policy gradient
             optimizer.zero_grad()

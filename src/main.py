@@ -343,20 +343,13 @@ class ARCLatentSeekPipeline:
             
             # Apply LatentSeek optimization if not all training pairs are correct
             if execution_result.accuracy < 1.0:
-                if self.config.use_description_based_optimization:
-                    logger.info(f"Applying description-based LatentSeek optimization to candidate {i+1}")
-                    optimization_result = self.latentseek_optimizer.optimize_description_based(
-                        problem,
-                        candidate,
-                        evaluation_result.total_reward
-                    )
-                else:
-                    logger.info(f"Applying standard LatentSeek optimization to candidate {i+1}")
-                    optimization_result = self.latentseek_optimizer.optimize(
-                        problem,
-                        candidate,
-                        evaluation_result.total_reward
-                    )
+                # Always use description-based optimization
+                logger.info(f"Applying description-based LatentSeek optimization to candidate {i+1}")
+                optimization_result = self.latentseek_optimizer.optimize_description_based(
+                    problem,
+                    candidate,
+                    evaluation_result.total_reward
+                )
                 
                 if optimization_result.converged:
                     logger.info(f"LatentSeek converged in {optimization_result.optimization_steps} steps")

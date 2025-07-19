@@ -10,7 +10,7 @@ import traceback
 from func_timeout import func_timeout, FunctionTimedOut
 
 from ..data import ARCProblem, ARCPair
-from .common_utils import *  # Import BARC common utilities including Color class
+from .common import *  # Import BARC common utilities including Color class
 
 
 class GridComparisonResult(Enum):
@@ -126,6 +126,8 @@ class CodeExecutor:
                     'input_grid': input_grid.copy(),
                     # Add Color class and constants
                     'Color': Color,
+                    'COLOR_MAP': COLOR_MAP,
+                    'REVERSE_COLOR_MAP': REVERSE_COLOR_MAP,
                     # Add BARC common utilities
                     'flood_fill': flood_fill,
                     'draw_line': draw_line,
@@ -171,6 +173,17 @@ class CodeExecutor:
                     'extract_subgrid': lambda grid, r1, c1, r2, c2: grid[r1:r2+1, c1:c2+1],
                     'paste_subgrid': lambda grid, subgrid, pos: blit(grid, subgrid, pos[0], pos[1]),
                 }
+                
+                # Import common module from root directory
+                import sys
+                import os
+                root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+                if root_dir not in sys.path:
+                    sys.path.insert(0, root_dir)
+                
+                # Import common module
+                import common
+                namespace['common'] = common
                 
                 # Execute code
                 exec(code, namespace)

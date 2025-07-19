@@ -3,6 +3,14 @@
 import numpy as np
 import random
 
+# Global color mapping to match long_with_logit_reward2.py
+COLOR_MAP = {
+    0: "Black", 1: "Blue", 2: "Red", 3: "Green", 4: "Yellow",
+    5: "Gray", 6: "Pink", 7: "Orange", 8: "Purple", 9: "Brown"
+}
+
+REVERSE_COLOR_MAP = {v: k for k, v in COLOR_MAP.items()}
+
 
 class Color:
     """

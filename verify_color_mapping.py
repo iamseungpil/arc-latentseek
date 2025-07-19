@@ -8,7 +8,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.generators.barc_generator import COLOR_MAP
-from src.executors.common_utils import Color
+from src.executors.common import Color
 from src.executors.grid_renderer import COLORS
 
 def verify_color_mapping():
