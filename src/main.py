@@ -311,8 +311,8 @@ class ARCLatentSeekPipeline:
             # Log detailed information
             self._log_candidate_details(problem.uid, i+1, candidate, execution_result, evaluation_result, "initial")
             
-            # Apply LatentSeek optimization if reward is below threshold
-            if evaluation_result.total_reward <= self.config.optimization_threshold:
+            # Apply LatentSeek optimization if not all training pairs are correct
+            if execution_result.accuracy < 1.0:
                 if self.config.use_description_based_optimization:
                     logger.info(f"Applying description-based LatentSeek optimization to candidate {i+1}")
                     optimization_result = self.latentseek_optimizer.optimize_description_based(
