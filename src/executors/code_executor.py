@@ -124,10 +124,6 @@ class CodeExecutor:
                     'all': all,
                     'any': any,
                     'input_grid': input_grid.copy(),
-                    # Add Color class and constants
-                    'Color': Color,
-                    'COLOR_MAP': COLOR_MAP,
-                    'REVERSE_COLOR_MAP': REVERSE_COLOR_MAP,
                     # Add BARC common utilities
                     'flood_fill': flood_fill,
                     'draw_line': draw_line,
@@ -184,6 +180,11 @@ class CodeExecutor:
                 # Import common module
                 import common
                 namespace['common'] = common
+                
+                # Also add all common symbols to namespace for "from common import *"
+                for attr in dir(common):
+                    if not attr.startswith('_'):
+                        namespace[attr] = getattr(common, attr)
                 
                 # Execute code
                 exec(code, namespace)
