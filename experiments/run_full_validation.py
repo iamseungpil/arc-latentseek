@@ -47,16 +47,37 @@ def main():
     
     # Run on validation problems
     print(f"\nRunning on {args.num_problems} validation problems...")
-    results = pipeline.solve_problems(
-        split="validation",
-        num_problems=args.num_problems
-    )
+    results = []
     
-    # Save results to file
+    # Import needed modules
     import json
     from datetime import datetime
     from dataclasses import asdict
     
+    # Get problems
+    problems = pipeline.data_loader.get_problems("validation", args.num_problems)
+    
+    # Solve each problem and save results incrementally
+    for i, problem in enumerate(problems):
+        print(f"\n{'='*60}")
+        print(f"Problem {i+1}/{len(problems)}: {problem.uid}")
+        print(f"{'='*60}")
+        
+        # Solve the problem
+        result = pipeline.solve_problem(problem)
+        results.append(result)
+        
+        # Save intermediate results after each problem
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        intermediate_file = os.path.join(args.output_dir, f"results_intermediate_{i+1}_problems.jsonl")
+        
+        with open(intermediate_file, "w") as f:
+            for r in results:
+                f.write(json.dumps(asdict(r)) + "\n")
+        
+        print(f"💾 Saved intermediate results ({i+1}/{len(problems)}) to {intermediate_file}")
+    
+    # Save final results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     # Save detailed results
