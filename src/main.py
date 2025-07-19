@@ -381,6 +381,21 @@ class ARCLatentSeekPipeline:
         if best_solution is None:
             logger.error(f"No valid solution found for problem {problem.uid}")
             
+            # Get the first attempted code and description for debugging
+            failed_code = ""
+            failed_description = ""
+            failed_errors = []
+            
+            if aligned_candidates:
+                failed_code = aligned_candidates[0].code
+                failed_description = aligned_candidates[0].description or ""
+            
+            # Collect all error messages
+            if candidate_details:
+                for candidate, exec_result in candidate_details:
+                    if exec_result and exec_result.error_messages:
+                        failed_errors.extend(exec_result.error_messages)
+            
             # Save error visualization with any attempted solutions
             error_viz_path = None
             if self.config.save_visualizations and candidate_details:
@@ -407,11 +422,14 @@ class ARCLatentSeekPipeline:
             return SolutionResult(
                 problem_id=problem.uid,
                 success=False,
-                best_code="",
-                best_description="",
+                best_code=failed_code,  # Save attempted code
+                best_description=failed_description,  # Save attempted description
                 best_reward=float('-inf'),
                 execution_accuracy=0.0,
-                evaluation_details={},
+                evaluation_details={
+                    "all_failed": True,
+                    "error_messages": failed_errors[:10]  # Save first 10 error messages
+                },
                 visualization_path=error_viz_path,
                 time_taken=time.time() - start_time,
                 initial_success=False,
