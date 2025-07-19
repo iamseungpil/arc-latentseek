@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from typing import List, Dict, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 
 from ..data import ARCProblem
@@ -24,6 +24,8 @@ class OptimizationResult:
     reward_history: List[float]
     optimization_steps: int
     converged: bool
+    all_outputs: List[BARCOutput] = field(default_factory=list)  # Store all generated outputs
+    accuracy_history: List[float] = field(default_factory=list)  # Store accuracy at each step
     
     def __repr__(self):
         return f"OptimizationResult(steps={self.optimization_steps}, final_reward={self.reward_history[-1]:.3f})"
@@ -95,6 +97,8 @@ class LatentSeekOptimizer:
         current_output = initial_output
         reward_history = [initial_reward]
         current_reward = initial_reward
+        all_outputs = [initial_output]
+        accuracy_history = []
         
         # Check if already good enough
         if current_reward > self.reward_threshold:
@@ -324,6 +328,8 @@ class LatentSeekOptimizer:
         current_output = initial_output
         reward_history = [initial_reward]
         current_reward = initial_reward
+        all_outputs = [initial_output]
+        accuracy_history = []
         
         # Check if already good enough
         if current_reward > self.reward_threshold:
@@ -390,6 +396,16 @@ class LatentSeekOptimizer:
             reward_history.append(new_reward)
             
             logger.info(f"Step {step + 1}: reward = {new_reward:.3f}, accuracy = {execution_result.accuracy:.2%}")
+            
+            # Log the code changes
+            logger.info(f"Step {step + 1} generated code preview (first 200 chars):")
+            logger.info(f"{new_output.code[:200]}...")
+            if new_output.description:
+                logger.info(f"Step {step + 1} description: {new_output.description[:100]}...")
+            
+            # Store output and accuracy
+            all_outputs.append(new_output)
+            accuracy_history.append(execution_result.accuracy)
             
             # Check if all training pairs are correct
             if execution_result.accuracy >= 1.0:

@@ -819,6 +819,39 @@ class ARCLatentSeekPipeline:
                     f"optimization_candidate_{candidate_num}_step_{step}_reward": reward,
                     "optimization_step": step
                 })
+            
+            # Save detailed optimization log
+            optimization_log_dir = os.path.join(self.config.output_dir, "latentseek_logs")
+            os.makedirs(optimization_log_dir, exist_ok=True)
+            
+            log_file = os.path.join(optimization_log_dir, f"{problem_id}_candidate_{candidate_num}_optimization.json")
+            
+            optimization_data = {
+                "problem_id": problem_id,
+                "candidate_num": candidate_num,
+                "optimization_steps": optimization_result.optimization_steps,
+                "converged": optimization_result.converged,
+                "reward_history": optimization_result.reward_history,
+                "accuracy_history": optimization_result.accuracy_history,
+                "initial_code": optimization_result.all_outputs[0].code if optimization_result.all_outputs else "",
+                "final_code": optimization_result.final_output.code,
+                "final_description": optimization_result.final_output.description,
+                "step_outputs": [
+                    {
+                        "step": i,
+                        "code": output.code[:500] + "..." if len(output.code) > 500 else output.code,
+                        "description": output.description,
+                        "reward": optimization_result.reward_history[i] if i < len(optimization_result.reward_history) else None,
+                        "accuracy": optimization_result.accuracy_history[i] if i < len(optimization_result.accuracy_history) else None
+                    }
+                    for i, output in enumerate(optimization_result.all_outputs)
+                ]
+            }
+            
+            with open(log_file, 'w') as f:
+                json.dump(optimization_data, f, indent=2)
+            
+            logger.info(f"Saved LatentSeek optimization log to: {log_file}")
                 
         except Exception as e:
             logger.warning(f"Failed to log optimization history: {e}")
