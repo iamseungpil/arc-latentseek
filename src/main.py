@@ -387,7 +387,11 @@ class ARCLatentSeekPipeline:
                 execution_accuracy=0.0,
                 evaluation_details={},
                 visualization_path=None,
-                time_taken=time.time() - start_time
+                time_taken=time.time() - start_time,
+                initial_success=False,
+                improved_by_latentseek=False,
+                initial_best_accuracy=0.0,
+                final_best_accuracy=0.0
             )
         
         # Save best visualization

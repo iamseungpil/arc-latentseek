@@ -52,10 +52,42 @@ def main():
         num_problems=args.num_problems
     )
     
-    # Print final summary
+    # Save results to file
+    import json
+    from datetime import datetime
+    from dataclasses import asdict
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Save detailed results
+    results_file = os.path.join(args.output_dir, f"results_{timestamp}.jsonl")
+    with open(results_file, "w") as f:
+        for result in results:
+            f.write(json.dumps(asdict(result)) + "\n")
+    print(f"\nResults saved to {results_file}")
+    
+    # Save summary
     successful = sum(1 for r in results if r.success)
     improved = sum(1 for r in results if r.improved_by_latentseek)
     
+    summary = {
+        "timestamp": timestamp,
+        "total_problems": len(results),
+        "successful": successful,
+        "success_rate": successful/len(results) if results else 0,
+        "improved_by_latentseek": improved,
+        "improvement_rate": improved/len(results) if results else 0,
+        "average_time_per_problem": sum(r.time_taken for r in results)/len(results) if results else 0,
+        "problem_ids": [r.problem_id for r in results],
+        "success_ids": [r.problem_id for r in results if r.success]
+    }
+    
+    summary_file = os.path.join(args.output_dir, f"summary_{timestamp}.json")
+    with open(summary_file, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"Summary saved to {summary_file}")
+    
+    # Print final summary
     print(f"\n{'='*60}")
     print(f"FINAL SUMMARY")
     print(f"{'='*60}")
