@@ -8,6 +8,7 @@ import logging
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 import time
+from datetime import datetime
 import wandb
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -98,7 +99,7 @@ class ARCLatentSeekPipeline:
         self.code_executor = CodeExecutor(config.execution_timeout)
         self.glm_evaluator = GLMEvaluator(config.glm_model)
         self.reward_model = RewardModel()
-        self.renderer = GridRenderer(os.path.join(config.output_dir, "visualizations"))
+        # Renderer will be initialized after creating date-stamped directory
         
         # Initialize alignment components
         if config.enable_code_alignment:
@@ -124,7 +125,14 @@ class ARCLatentSeekPipeline:
         
         # Create output directories
         os.makedirs(config.output_dir, exist_ok=True)
-        os.makedirs(os.path.join(config.output_dir, "visualizations"), exist_ok=True)
+        
+        # Create date-stamped visualization directory
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.visualizations_dir = os.path.join(config.output_dir, f"visualizations_{timestamp}")
+        os.makedirs(self.visualizations_dir, exist_ok=True)
+        
+        # Update renderer with new visualization directory
+        self.renderer = GridRenderer(self.visualizations_dir)
         
         logger.info("Pipeline initialized successfully")
     
@@ -205,6 +213,7 @@ class ARCLatentSeekPipeline:
         best_reward = float('-inf')
         best_output = None
         best_execution = None
+        candidate_details = []  # Track all candidates for visualization
         
         # Track before/after improvement
         initial_best_accuracy = 0.0
@@ -351,6 +360,9 @@ class ARCLatentSeekPipeline:
                             evaluation_result = optimized_evaluation
                             logger.info(f"Using optimized version for candidate {i+1}")
             
+            # Track candidate for visualization
+            candidate_details.append((candidate, execution_result))
+            
             # Track best solution
             if evaluation_result.total_reward > best_reward:
                 best_reward = evaluation_result.total_reward
@@ -382,15 +394,35 @@ class ARCLatentSeekPipeline:
         final_viz_path = None
         if self.config.save_visualizations:
             final_viz_path = os.path.join(
-                self.config.output_dir,
-                "visualizations", 
+                self.visualizations_dir,
                 f"{problem.uid}_best.png"
             )
-            self.renderer.render_problem_with_output(
-                problem,
-                best_execution.output_grids,
-                final_viz_path
-            )
+            try:
+                self.renderer.render_problem_with_output(
+                    problem,
+                    best_execution.output_grids,
+                    final_viz_path
+                )
+                logger.info(f"Saved visualization to {final_viz_path}")
+            except Exception as e:
+                logger.error(f"Failed to save visualization: {e}")
+                
+        # Also save visualization for each candidate that was evaluated
+        if self.config.save_visualizations and candidate_details:
+            for i, (candidate, exec_result) in enumerate(candidate_details):
+                if exec_result and exec_result.output_grids:
+                    try:
+                        candidate_viz_path = os.path.join(
+                            self.visualizations_dir,
+                            f"{problem.uid}_candidate_{i+1}.png"
+                        )
+                        self.renderer.render_problem_with_output(
+                            problem,
+                            exec_result.output_grids,
+                            candidate_viz_path
+                        )
+                    except Exception as e:
+                        logger.debug(f"Failed to save candidate {i+1} visualization: {e}")
         
         # Calculate final tracking metrics
         final_best_accuracy = best_execution.accuracy

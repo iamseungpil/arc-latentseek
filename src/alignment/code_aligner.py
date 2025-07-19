@@ -3,6 +3,7 @@ BARC Code Aligner using Llama3.1-8B Instruct
 """
 
 import torch
+import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from typing import Optional, Dict, Any
 import logging
@@ -138,65 +139,85 @@ class BARCCodeAligner:
         return aligned_output
     
     def _create_alignment_prompt(self, barc_output: BARCOutput, problem: ARCProblem) -> str:
-        """Create alignment prompt based on barc_post style"""
+        """Create alignment prompt matching barc_sft_v2 format"""
         
-        # Extract ARC problem description for context
-        problem_context = self._format_problem_context(problem)
+        # Generate examples text using color names
+        examples_text = []
+        for i, pair in enumerate(problem.train_pairs):
+            examples_text.append(f"Example {i+1}:")
+            examples_text.append(f"Input: {self._grid_to_string(pair.x)}")
+            examples_text.append(f"Output: {self._grid_to_string(pair.y)}")
         
-        prompt = f"""<|start_header_id|>system<|end_header_id|>
-You are an expert ARC puzzle code reviewer and optimizer. Your task is to improve BARC-generated code while preserving its core structure and intent.
+        prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+
+You are an expert ARC puzzle code reviewer who specializes in improving BARC model-generated solutions. Your task is to analyze and fix the given code while preserving its logical structure and improving its correctness.
 
 **Critical Requirements:**
 
-1. **Preserve BARC Structure**: Always maintain the exact format:
-   - `# concepts: [list of concepts]`
-   - `# description: [clear description]` 
-   - `def transform(input_grid):`
+1. **Preserve BARC Structure**: Maintain the exact format with:
+   - `# concepts:` section (list key pattern concepts)
+   - `# description:` section (explain the transformation clearly)
+   - `def transform(input_grid):` function
 
-2. **Common.py Integration**: Use common.py utilities where appropriate:
-   - `from common import *` at the top
-   - Use functions like `find_connected_components`, `blit_sprite`, `flood_fill`, etc.
-   - Prefer common.py functions over manual implementations
+2. **Common.py Integration**: 
+   - Use appropriate common.py utilities: `find_connected_components`, `object_position`, `blit_sprite`, `crop`, `detect_objects`, etc.
+   - Use Color constants: `Color.BLACK`, `Color.BLUE`, `Color.RED`, etc.
+   - Prefer common.py functions over manual numpy operations when available
 
-3. **Color Constants**: Use Color class constants instead of numbers:
-   - `Color.BLACK` instead of `0`
-   - `Color.BLUE` instead of `1`
-   - `Color.RED` instead of `2`, etc.
+3. **Pattern-Code Alignment**:
+   - Ensure the `# description:` accurately describes what the code does
+   - Make sure the code implementation matches the described pattern exactly
+   - Fix any logical inconsistencies between description and implementation
 
-4. **Pattern-Code Alignment**: Ensure the description accurately matches the implementation
-   - If description says "fill rectangles", code should actually fill rectangles
-   - If description mentions "connected components", code should use find_connected_components
+4. **Code Quality**:
+   - Fix syntax errors and logical bugs
+   - Improve error handling and edge cases
+   - Ensure proper grid bounds checking
+   - Make the code more robust and efficient
 
-5. **Code Quality**: Fix bugs and improve robustness:
-   - Add proper bounds checking
-   - Handle edge cases
-   - Ensure the function returns a valid grid
-   - Add error handling where appropriate
+5. **ARC-Specific Best Practices**:
+   - Handle empty grids and edge cases gracefully
+   - Use proper connectivity (4-way vs 8-way) for object detection
+   - Ensure output grid has correct dimensions
+   - Validate transformations against the given examples
 
-6. **ARC-Specific Best Practices**:
-   - Work with numpy arrays efficiently
-   - Preserve grid dimensions unless explicitly changing them
-   - Use appropriate connectivity (4-way vs 8-way)
-   - Handle background colors properly
+**Analysis Process:**
+1. First, understand the pattern from the examples
+2. Check if the current description matches the pattern
+3. Verify if the code correctly implements the description
+4. Fix any discrepancies and improve robustness
+
+Return ONLY the corrected Python code maintaining the exact BARC format.
 
 <|eot_id|><|start_header_id|>user<|end_header_id|>
-**ARC Problem Context:**
-{problem_context}
 
-**Original BARC Code:**
+**Pattern Examples:**
+{chr(10).join(examples_text)}
+
+**Code to Review and Align:**
 ```python
 {barc_output.code}
 ```
 
-**Task:** Improve this code following all the requirements above. The improved code should be more robust, use appropriate common.py utilities, and ensure the description accurately matches the implementation.
+**Task**: Review this BARC-generated code and fix any issues while preserving its structure. Ensure the pattern description accurately describes the transformation and the code correctly implements it. Use common.py utilities appropriately.
 
-**Improved Code:**<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-```python
-from common import *
+<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
-"""
+```python"""
         
         return prompt.strip()
+    
+    def _grid_to_string(self, grid: np.ndarray) -> str:
+        """Convert grid to color string format matching BARC"""
+        COLOR_MAP = {
+            0: "Black", 1: "Blue", 2: "Red", 3: "Green", 4: "Yellow",
+            5: "Gray", 6: "Pink", 7: "Orange", 8: "Purple", 9: "Brown"
+        }
+        rows = []
+        for row in grid:
+            color_row = [COLOR_MAP.get(int(cell), f"Unknown_{cell}") for cell in row]
+            rows.append(" ".join(color_row))
+        return "\n".join(rows)
     
     def _format_problem_context(self, problem: ARCProblem) -> str:
         """Format ARC problem context for the prompt"""

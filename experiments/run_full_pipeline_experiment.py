@@ -129,7 +129,7 @@ class FullPipelineExperiment:
             
             # Run through pipeline
             start_time = time.time()
-            result = self.pipeline.run(problem_data)
+            result = self.pipeline.solve_problem(problem_data)
             elapsed_time = time.time() - start_time
             
             # Add timing information
