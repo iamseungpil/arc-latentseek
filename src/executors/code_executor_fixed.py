@@ -11,13 +11,15 @@ import ast
 import sys
 import os
 
-# Add barc_post to path for common module
-sys.path.insert(0, '/home/ubuntu/barc_post')
+# Import from root common.py
+root_dir = "/home/ubuntu/arc-latentseek"
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
 
 from ..data import ARCProblem
 
 # Import all utilities from common (BARC compatible)
-from .common import *
+from common import *
 
 
 class GridComparisonResult(Enum):
@@ -81,7 +83,10 @@ class CodeExecutor:
         correct_count = sum(1 for c in comparison_results if c == GridComparisonResult.EQUAL)
         accuracy = correct_count / len(problem.train_pairs) if problem.train_pairs else 0.0
         
-        success = len(error_messages) == 0 and accuracy > 0
+        # Consider execution successful if no runtime errors occur
+        # Shape/content mismatches should be handled by GLM evaluation and LatentSeek
+        # Only actual errors (syntax, runtime, etc.) should be considered failures
+        success = len(error_messages) == 0
         
         return ExecutionResult(
             success=success,

@@ -138,9 +138,11 @@ class LatentSeekOptimizer:
         logger.info(f"Optimizing {update_length} out of {original_length} hidden states")
         
         # Extract hidden states to optimize
+        # Ensure all tensors are on the same device as the model
+        model_device = next(self.model.parameters()).device
         optimized_hidden_states = torch.nn.Parameter(
             torch.stack([
-                state.clone().detach().requires_grad_(True) 
+                state.clone().detach().to(model_device).requires_grad_(True) 
                 for state in hidden_states_list[:update_length]
             ])
         )
@@ -177,6 +179,10 @@ class LatentSeekOptimizer:
             optimizer.zero_grad()
             
             # Calculate policy gradient loss
+            # Ensure hidden states are on the correct device
+            model_device = next(self.model.parameters()).device
+            if optimized_hidden_states.device != model_device:
+                optimized_hidden_states = optimized_hidden_states.to(model_device)
             logits = self.model.lm_head(optimized_hidden_states)  # [update_length, vocab_size]
             probs = F.softmax(logits, dim=-1) + 1e-8
             
@@ -362,9 +368,11 @@ class LatentSeekOptimizer:
             return self.optimize(problem, initial_output, initial_reward)
         
         # Extract description hidden states to optimize
+        # Ensure all tensors are on the same device as the model
+        model_device = next(self.model.parameters()).device
         optimized_desc_states = torch.nn.Parameter(
             torch.stack([
-                state.clone().detach().requires_grad_(True) 
+                state.clone().detach().to(model_device).requires_grad_(True) 
                 for state in hidden_states_list[desc_start:desc_end]
             ])
         )
@@ -423,6 +431,10 @@ class LatentSeekOptimizer:
             optimizer.zero_grad()
             
             # Calculate policy gradient loss for description tokens only
+            # Ensure hidden states are on the correct device
+            model_device = next(self.model.parameters()).device
+            if optimized_desc_states.device != model_device:
+                optimized_desc_states = optimized_desc_states.to(model_device)
             desc_logits = self.model.lm_head(optimized_desc_states)  # [desc_length, vocab_size]
             desc_probs = F.softmax(desc_logits, dim=-1) + 1e-8
             

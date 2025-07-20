@@ -65,7 +65,7 @@ class BARCCodeAligner:
                     max_seq_length=4096,
                     dtype=torch.bfloat16,
                     load_in_4bit=False,  # Use bfloat16 for better quality
-                    device_map="auto"
+                    device_map={"":0}  # Use only cuda:0
                 )
                 
                 # Enable fast inference mode
@@ -81,7 +81,7 @@ class BARCCodeAligner:
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_path,
                     torch_dtype=torch.bfloat16,
-                    device_map="auto",
+                    device_map={"":0},  # Use only cuda:0
                     low_cpu_mem_usage=True,
                     attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager",
                 )

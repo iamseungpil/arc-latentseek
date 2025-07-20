@@ -1,45 +1,27 @@
 #!/usr/bin/env python3
-"""Test Color.PURPLE specifically"""
 
 import numpy as np
-import sys
-import os
+from src.executors.code_executor import CodeExecutor
 
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
-
-from src.executors import CodeExecutor
-from src.data import ARCProblem, ARCPair
-
-# Test code that uses PURPLE
-test_code = """from common import *
+# Test code that uses Color.PURPLE
+test_code = """
+from common import *
 
 def main(input_grid):
-    output_grid = np.full_like(input_grid, Color.PURPLE)
-    return output_grid"""
+    output_grid = np.zeros_like(input_grid)
+    output_grid[0, 0] = Color.PURPLE
+    output_grid[0, 1] = Color.BROWN
+    return output_grid
+"""
 
-# Create a simple test problem
-test_input = np.array([
-    [0, 1, 2],
-    [3, 4, 5],
-    [6, 7, 8]
-])
+# Create test data
+input_grid = np.array([[0, 0], [0, 0]])
 
-# Create test problem
-test_problem = ARCProblem(
-    uid="test_purple",
-    train_pairs=[ARCPair(x=test_input, y=test_input)],  # dummy output
-    test_pairs=[]
-)
+# Test the executor
+executor = CodeExecutor()
+result = executor.execute_single(test_code, input_grid)
 
-# Test executor
-print("Testing Color.PURPLE...")
-executor = CodeExecutor(timeout=2)
-
-# Test execution
-exec_result = executor.execute(test_code, test_problem)
-print(f"Success: {exec_result.success}")
-print(f"Error messages: {exec_result.error_messages}")
-if exec_result.output_grids and exec_result.success:
-    print(f"Output grid:\n{exec_result.output_grids[0]}")
-    print(f"All values are 8 (PURPLE)? {np.all(exec_result.output_grids[0] == 8)}")
+print(f"Result type: {type(result)}")
+print(f"Result:\n{result}")
+print(f"Color.PURPLE value should be 8, got: {result[0, 0] if isinstance(result, np.ndarray) else 'ERROR'}")
+print(f"Color.BROWN value should be 9, got: {result[0, 1] if isinstance(result, np.ndarray) else 'ERROR'}")

@@ -59,7 +59,7 @@ class BARCGenerator:
                 max_seq_length=4096,
                 dtype=torch.bfloat16,
                 load_in_4bit=False,  # Use bfloat16 instead of 4bit for better quality
-                device_map="auto"
+                device_map={"":0}  # Use only cuda:0 (GPU 6 when CUDA_VISIBLE_DEVICES=6)
             )
             
             # Enable fast inference mode
@@ -74,7 +74,7 @@ class BARCGenerator:
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
                 torch_dtype=torch.bfloat16,
-                device_map="auto",
+                device_map={"":0},  # Use only cuda:0 (GPU 6 when CUDA_VISIBLE_DEVICES=6)
                 low_cpu_mem_usage=True,
                 attn_implementation="eager",  # Disable flash attention to avoid compatibility issues
             )
@@ -118,7 +118,17 @@ class BARCGenerator:
     def _create_prompt(self, problem: ARCProblem, test_idx: int = 0) -> List[Dict[str, str]]:
         """Create BARC-style prompt"""
         # System prompt
-        system_content = "You are an world-class puzzle solver who are extremely good at spotting patterns and solving puzzles. You are also an expert Python programmer who can write code to solve puzzles."
+        system_content = """You are an world-class puzzle solver who are extremely good at spotting patterns and solving puzzles. You are also an expert Python programmer who can write code to solve puzzles.
+
+IMPORTANT: When writing Python code:
+1. Your function MUST be named either 'main' or 'transform' and take input_grid as parameter
+2. Your function MUST explicitly return the output grid using a return statement
+3. The returned value MUST be a 2D numpy array (not None, not a list, not a 1D array)
+4. Example structure:
+   def main(input_grid):
+       # your code here
+       output_grid = ... # create the output as 2D numpy array
+       return output_grid  # ALWAYS include this return statement!"""
         
         # User prompt
         test_input = problem.test_pairs[test_idx].x

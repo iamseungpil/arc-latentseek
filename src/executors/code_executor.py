@@ -10,7 +10,15 @@ import traceback
 from func_timeout import func_timeout, FunctionTimedOut
 
 from ..data import ARCProblem, ARCPair
-from .common import *  # Import BARC common utilities including Color class
+
+# Import common from project root, not local executors
+import sys
+import os
+# Hardcode the root path to ensure we get the right common.py
+root_dir = "/home/ubuntu/arc-latentseek"
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+from common import *  # Import BARC common utilities including Color class from root
 
 
 class GridComparisonResult(Enum):
@@ -67,6 +75,10 @@ class CodeExecutor:
                 
                 if isinstance(output, str) and output.startswith("ERROR"):
                     error_messages.append(f"Pair {i}: {output}")
+                elif output is None:
+                    error_messages.append(f"Pair {i}: Function returned None")
+                elif not isinstance(output, np.ndarray):
+                    error_messages.append(f"Pair {i}: Function returned {type(output).__name__} instead of numpy array")
                     
             except Exception as e:
                 error_msg = f"Pair {i}: {str(e)}"
@@ -78,7 +90,17 @@ class CodeExecutor:
         correct_count = sum(1 for c in comparison_results if c == GridComparisonResult.EQUAL)
         accuracy = correct_count / len(problem.train_pairs) if problem.train_pairs else 0.0
         
-        success = len(error_messages) == 0 and accuracy > 0
+        # Consider execution successful if no errors OR only shape/content mismatches
+        # This allows LatentSeek to try fixing shape issues
+        acceptable_mismatches = {GridComparisonResult.SHAPE_MISMATCH, GridComparisonResult.CONTENT_MISMATCH}
+        has_only_acceptable_mismatches = all(
+            c in acceptable_mismatches or c == GridComparisonResult.EQUAL 
+            for c in comparison_results
+        )
+        
+        # Success if no runtime errors, even if shapes don't match
+        # Shape/content mismatches should be handled by LatentSeek optimization
+        success = len(error_messages) == 0 and has_only_acceptable_mismatches
         
         return ExecutionResult(
             success=success,
@@ -173,15 +195,31 @@ class CodeExecutor:
                 # Import common module from root directory
                 import sys
                 import os
-                root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+                # Force use of the project root directory
+                # Hardcode the path since __file__ might not be reliable in exec context
+                root_dir = "/home/ubuntu/arc-latentseek"
+                
+                # Add root to path if not already there
                 if root_dir not in sys.path:
                     sys.path.insert(0, root_dir)
                 
-                # Import common module
-                import common
-                namespace['common'] = common
+                # Remove any other paths that might contain a different common module
+                # Keep only standard paths and our root
+                original_paths = sys.path.copy()
+                sys.path = [p for p in sys.path if p == root_dir or not os.path.exists(os.path.join(p, 'common.py')) or 'site-packages' in p]
                 
-                # Also add all common symbols to namespace for "from common import *"
+                # Now import the root common module
+                import importlib
+                if 'common' in sys.modules:
+                    # Reload to ensure we get the right one
+                    importlib.reload(sys.modules['common'])
+                import common
+                
+                # Restore paths
+                sys.path = original_paths
+                
+                # Add common module and all its symbols to namespace
+                namespace['common'] = common
                 for attr in dir(common):
                     if not attr.startswith('_'):
                         namespace[attr] = getattr(common, attr)

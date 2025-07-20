@@ -240,9 +240,34 @@ class ARCLatentSeekPipeline:
             num_candidates=self.config.num_candidates
         )
         
+        # Check if candidates were generated
+        if not candidates:
+            logger.error(f"No candidates generated for problem {problem.uid}")
+            return SolutionResult(
+                problem_id=problem.uid,
+                success=False,
+                best_code="",
+                best_description="",
+                best_reward=float('-inf'),
+                execution_accuracy=0.0,
+                evaluation_details={"error": "No candidates generated"},
+                visualization_path=None,
+                time_taken=time.time() - start_time,
+                initial_success=False,
+                improved_by_latentseek=False,
+                initial_best_accuracy=0.0,
+                final_best_accuracy=0.0,
+                alignment_responses=[],
+                glm_responses=[],
+                barc_raw_responses=[]
+            )
+        
         # Collect BARC raw responses
         for candidate in candidates:
-            all_barc_raw_responses.append(candidate.raw_response)
+            if hasattr(candidate, 'raw_response'):
+                all_barc_raw_responses.append(candidate.raw_response)
+            else:
+                logger.warning(f"Candidate missing raw_response attribute")
         barc_time = time.time() - barc_start_time
         logger.info(f"BARC generation completed in {barc_time:.2f}s")
         wandb.log({"barc_generation_time": barc_time})
@@ -300,6 +325,12 @@ class ARCLatentSeekPipeline:
         for i, candidate in enumerate(aligned_candidates):
             logger.info(f"Evaluating candidate {i+1}/{len(aligned_candidates)}")
             
+            # Debug: Check candidate type
+            if not hasattr(candidate, 'code'):
+                logger.error(f"Candidate {i+1} missing 'code' attribute! Type: {type(candidate)}")
+                logger.error(f"Candidate content: {candidate}")
+                continue
+                
             # Execute code
             execution_result = self.code_executor.execute(candidate.code, problem)
             
@@ -873,16 +904,32 @@ class ARCLatentSeekPipeline:
 
 def main():
     """Main entry point"""
-    # Create default configuration
+    import argparse
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="ARC LatentSeek Pipeline")
+    parser.add_argument("--mode", default="solve", help="Mode: solve")
+    parser.add_argument("--problems", default="validation", help="Dataset split: train, validation, or all")
+    parser.add_argument("--num_problems", type=int, default=None, help="Number of problems to solve")
+    parser.add_argument("--num_candidates", type=int, default=8, help="Number of candidates per problem")
+    parser.add_argument("--output_dir", default="results", help="Output directory")
+    parser.add_argument("--optimization_steps", type=int, default=10, help="LatentSeek optimization steps")
+    
+    args = parser.parse_args()
+    
+    # Create configuration
     config = PipelineConfig()
+    config.num_candidates = args.num_candidates
+    config.output_dir = args.output_dir
+    config.optimization_steps = args.optimization_steps
     
     # Create pipeline
     pipeline = ARCLatentSeekPipeline(config)
     
-    # Solve some example problems
+    # Solve problems
     results = pipeline.solve_problems(
-        split="validation",
-        num_problems=5
+        split=args.problems,
+        num_problems=args.num_problems
     )
     
     return results

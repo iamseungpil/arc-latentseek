@@ -51,7 +51,7 @@ class GLMEvaluator:
         self.model = Glm4vForConditionalGeneration.from_pretrained(
             self.model_path,
             torch_dtype=torch.bfloat16,
-            device_map="auto"
+            device_map={"":0}  # Use only cuda:0 (GPU 6 when CUDA_VISIBLE_DEVICES=6)
         )
         print("GLM model loaded successfully")
         
@@ -72,6 +72,12 @@ class GLMEvaluator:
         Returns:
             EvaluationResult with rewards and feedback
         """
+        # Debug: Check what type barc_output is
+        if not isinstance(barc_output, BARCOutput):
+            logger.error(f"barc_output is not a BARCOutput instance! Type: {type(barc_output)}")
+            logger.error(f"barc_output content: {barc_output}")
+            raise TypeError(f"Expected BARCOutput, got {type(barc_output)}")
+            
         # Render problem with outputs in a single 3-column image
         comparison_path = f"{base_path}_comparison.png"
         self.renderer.render_problem_with_output(
@@ -318,8 +324,15 @@ FEEDBACK: [Explain specifically why the generated outputs differ from expected o
     
     def _run_glm_inference_single_image(self, image_path: str, prompt: str) -> str:
         """Run GLM inference on a single image with prompt"""
+        # GLM-4.1V expects content to be a list of dicts with type and text/image fields
         messages = [
-            {"role": "user", "content": prompt, "images": [image_path]}
+            {
+                "role": "user", 
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image", "image": image_path}
+                ]
+            }
         ]
         
         inputs = self.processor.apply_chat_template(
