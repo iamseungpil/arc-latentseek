@@ -369,6 +369,17 @@ class ARCLatentSeekPipeline:
             if evaluation_result.total_reward >= 1.0:  # Perfect solution
                 initial_success = True
             
+            # Early stopping if 100% accuracy achieved
+            if execution_result.accuracy >= 1.0:
+                logger.info(f"🎯 Candidate {i+1} achieved 100% accuracy! Early stopping.")
+                best_reward = evaluation_result.total_reward
+                best_solution = candidate
+                best_output = evaluation_result
+                best_execution = execution_result
+                # Log and track this perfect candidate
+                candidate_details.append((candidate, execution_result))
+                break
+            
             # Log detailed information
             self._log_candidate_details(problem.uid, i+1, candidate, execution_result, evaluation_result, "initial")
             
@@ -413,6 +424,17 @@ class ARCLatentSeekPipeline:
                             execution_result = optimized_execution
                             evaluation_result = optimized_evaluation
                             logger.info(f"Using optimized version for candidate {i+1}")
+                        
+                        # Early stopping if optimized version achieves 100% accuracy
+                        if optimized_execution.accuracy >= 1.0:
+                            logger.info(f"🎯 Optimized candidate {i+1} achieved 100% accuracy! Early stopping.")
+                            best_reward = optimized_evaluation.total_reward
+                            best_solution = optimized_candidate
+                            best_output = optimized_evaluation
+                            best_execution = optimized_execution
+                            # Track this perfect candidate
+                            candidate_details.append((optimized_candidate, optimized_execution))
+                            break
             
             # Track candidate for visualization
             candidate_details.append((candidate, execution_result))
