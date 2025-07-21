@@ -84,4 +84,7 @@ datasets/
 *.jsonl
 *.json
 !requirements.txt
-!package.json
+!package.json*.log
+*.txt
+*.png
+*.jpg

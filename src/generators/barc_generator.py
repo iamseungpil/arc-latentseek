@@ -149,7 +149,8 @@ IMPORTANT: When writing Python code:
     def generate(self, problem: ARCProblem, 
                 temperature: float = 0.8,
                 max_new_tokens: int = 2048,
-                num_candidates: int = 1) -> List[BARCOutput]:
+                num_candidates: int = 1,
+                additional_prompt: str = "") -> List[BARCOutput]:
         """
         Generate code solutions for an ARC problem
         
@@ -164,6 +165,10 @@ IMPORTANT: When writing Python code:
         """
         # Create prompt
         prompt = self._create_prompt(problem)
+        
+        # Add additional prompt if provided
+        if additional_prompt:
+            prompt[-1]["content"] += f"\n\n{additional_prompt}"
         
         # Apply chat template
         text = self.tokenizer.apply_chat_template(
