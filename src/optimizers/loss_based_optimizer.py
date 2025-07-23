@@ -9,7 +9,8 @@ from typing import Dict, Optional, List, Tuple
 from dataclasses import dataclass
 import logging
 
-from ..data import ARCProblem, BARCOutput
+from ..data import ARCProblem
+from ..generators import BARCOutput
 from ..generators.barc_generator import BARCGenerator
 from ..executors.code_executor import CodeExecutor
 from ..evaluators.arc_evaluator import ARCEvaluator

@@ -23,6 +23,7 @@ from src.evaluators.arc_evaluator import ARCEvaluator
 from src.evaluators.glm_evaluator import GLMEvaluator
 from src.evaluators.multitensor_evaluator import MultiTensorEvaluator, convert_multitensor_to_reward
 from src.optimizers import LatentSeekOptimizer, OptimizationResult
+from src.optimizers.loss_based_optimizer import MultiTensorLossOptimizer
 from src.executors.code_executor import CodeExecutor
 
 # Setup logging
@@ -37,7 +38,7 @@ logger = logging.getLogger(__name__)
 class ExperimentCondition:
     """Experiment condition configuration"""
     name: str
-    use_multitensor: bool  # True for multitensor, False for GLM reward
+    use_loss_based: bool  # True for loss-based optimization, False for policy gradient
 
 
 @dataclass 
@@ -85,7 +86,8 @@ class SimpleLatentSeekExperiment:
         self.multitensor_evaluator = MultiTensorEvaluator()
         self.code_executor = CodeExecutor()
         
-        # Initialize optimizer with 20% optimization
+        # Initialize optimizers
+        # Policy gradient optimizer (for GLM reward)
         self.latent_optimizer = LatentSeekOptimizer(
             barc_generator=self.barc_generator,
             code_executor=self.code_executor,
@@ -94,6 +96,15 @@ class SimpleLatentSeekExperiment:
             max_steps=10,
             k=0.2,  # 20% optimization instead of 10%
             reward_threshold=0.5
+        )
+        
+        # Loss-based optimizer (for CompressARC style)
+        self.loss_optimizer = MultiTensorLossOptimizer(
+            model=self.barc_generator.model,
+            tokenizer=self.barc_generator.tokenizer,
+            lr=0.01,
+            max_steps=20,
+            kl_weight=0.1
         )
         
         # Load dataset
@@ -184,15 +195,30 @@ class SimpleLatentSeekExperiment:
         best_candidate = initial_candidate
         
         # Optimization loop
-        logger.info(f"\nStep 1: Applying LatentSeek optimization...")
+        logger.info(f"\nStep 1: Applying {'loss-based' if condition.use_loss_based else 'policy gradient'} optimization...")
         
         try:
-            # Apply LatentSeek optimization with 20% token optimization
-            opt_result = self.latent_optimizer.optimize(
-                problem=problem,
-                initial_output=current_candidate,
-                initial_reward=initial_eval['reward']
-            )
+            if condition.use_loss_based:
+                # Apply loss-based optimization (CompressARC style)
+                expected_outputs = [pair.y for pair in problem.train_pairs]
+                opt_result = self.loss_optimizer.optimize_with_loss(
+                    problem=problem,
+                    initial_output=current_candidate,
+                    target_outputs=expected_outputs
+                )
+                
+                if opt_result.success and opt_result.final_output:
+                    optimized_candidate = opt_result.final_output
+                else:
+                    logger.warning(f"Loss-based optimization failed")
+                    optimized_candidate = current_candidate
+            else:
+                # Apply policy gradient optimization with GLM reward
+                opt_result = self.latent_optimizer.optimize(
+                    problem=problem,
+                    initial_output=current_candidate,
+                    initial_reward=initial_eval['reward']
+                )
             
             if opt_result and opt_result.final_output:
                 optimized_candidate = opt_result.final_output
@@ -277,35 +303,27 @@ class SimpleLatentSeekExperiment:
             problem.train_pairs, train_outputs
         )
         
-        # Compute reward based on condition
-        if condition.use_multitensor:
-            # Use multitensor evaluation
-            multitensor_result = self.multitensor_evaluator.evaluate_multitensor(
-                problem, train_outputs
-            )
-            reward = convert_multitensor_to_reward(multitensor_result)
-            logger.info(f"Multitensor scores: {multitensor_result.to_dict()}")
-        else:
-            # Use GLM evaluation
-            glm_result = self.glm_evaluator.evaluate_barc_output(
-                problem, candidate, train_outputs
-            )
-            
-            # Convert to reward
-            passed_checks = sum([
-                glm_result.understanding_check,
-                glm_result.calculation_check,
-                glm_result.answer_completeness,
-                glm_result.answer_correct
-            ])
-            reward = -1.0 + (passed_checks * 0.2)  # Scale to [-1.0, -0.2]
-            
-            logger.info(
-                f"GLM checks - Understanding: {glm_result.understanding_check}, "
-                f"Calculation: {glm_result.calculation_check}, "
-                f"Completeness: {glm_result.answer_completeness}, "
-                f"Correct: {glm_result.answer_correct}"
-            )
+        # Always use GLM evaluation for reward (both conditions use same evaluation)
+        # The difference is in optimization method, not evaluation
+        glm_result = self.glm_evaluator.evaluate_barc_output(
+            problem, candidate, train_outputs
+        )
+        
+        # Convert to reward
+        passed_checks = sum([
+            glm_result.understanding_check,
+            glm_result.calculation_check,
+            glm_result.answer_completeness,
+            glm_result.answer_correct
+        ])
+        reward = -1.0 + (passed_checks * 0.2)  # Scale to [-1.0, -0.2]
+        
+        logger.info(
+            f"GLM checks - Understanding: {glm_result.understanding_check}, "
+            f"Calculation: {glm_result.calculation_check}, "
+            f"Completeness: {glm_result.answer_completeness}, "
+            f"Correct: {glm_result.answer_correct}"
+        )
         
         return {
             'reward': reward,
@@ -399,12 +417,12 @@ def main():
     # Define experiment conditions
     conditions = [
         ExperimentCondition(
-            name="glm_reward",
-            use_multitensor=False
+            name="policy_gradient_glm",
+            use_loss_based=False  # Use policy gradient with GLM reward
         ),
         ExperimentCondition(
-            name="multitensor_reward",
-            use_multitensor=True
+            name="compress_arc_loss",
+            use_loss_based=True  # Use CompressARC-style loss optimization
         ),
     ]
     
