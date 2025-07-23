@@ -48,10 +48,17 @@ class GLMEvaluator:
         """Load GLM model and processor"""
         print(f"Loading GLM model: {self.model_path}")
         self.processor = AutoProcessor.from_pretrained(self.model_path, use_fast=True)
+        # Get the first available CUDA device
+        import torch
+        if torch.cuda.is_available():
+            device_id = torch.cuda.current_device()
+        else:
+            device_id = 0
+            
         self.model = Glm4vForConditionalGeneration.from_pretrained(
             self.model_path,
             torch_dtype=torch.bfloat16,
-            device_map={"":0}  # Use only cuda:0 (GPU 6 when CUDA_VISIBLE_DEVICES=6)
+            device_map={"": device_id}  # Use current CUDA device
         )
         print("GLM model loaded successfully")
         

@@ -88,10 +88,10 @@ class ComparativeExperimentV2:
             glm_evaluator=self.glm_evaluator
         )
         
-        # Use validation problems 0-10
-        val_problems = self.loader.validation_problems[:11]  # 0-10
-        self.problems = [p.uid for p in val_problems]
-        logger.info(f"Using validation problems 0-10: {self.problems}")
+        # Use 5 problems from the previous experiments
+        self.problems = ['2072aba6', 'bb52a14b', '136b0064', 'ea9794b1', 'f5aa3634']
+        
+        logger.info(f"Using 5 validation problems: {self.problems}")
         
         # Number of candidates and optimization steps
         self.num_candidates = 2
@@ -199,8 +199,9 @@ Provide a description that could be used as guidance for code generation. Be spe
             logger.info(f"\nStep {step}: Applying LatentSeek optimization...")
             
             try:
-                # Apply LatentSeek optimization
-                opt_result = self.latent_optimizer.optimize(
+                # Apply LatentSeek optimization using description-based method
+                logger.info(f"Calling optimize_description_based with params: problem={problem.uid}, initial_reward={step_results[-1].reward}")
+                opt_result = self.latent_optimizer.optimize_description_based(
                     problem=problem,
                     initial_output=current_candidate,
                     initial_reward=step_results[-1].reward
@@ -244,6 +245,8 @@ Provide a description that could be used as guidance for code generation. Be spe
                     
             except Exception as e:
                 logger.error(f"Error in optimization step {step}: {e}")
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
                 # Continue with previous candidate
                 step_result = StepResult(
                     step=step,
@@ -504,6 +507,10 @@ Provide a description that could be used as guidance for code generation. Be spe
 def main():
     """Main function"""
     gpu_id = int(sys.argv[1]) if len(sys.argv) > 1 else 4
+    
+    # Set CUDA_VISIBLE_DEVICES to use only the specified GPU
+    import os
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     
     print(f"Starting comparative experiment on GPU {gpu_id}")
     
