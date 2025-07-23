@@ -132,7 +132,13 @@ class LatentSeekOptimizer:
                 
                 # Continue generation from the optimized point
                 generated_seq = []
-                for _ in range(2048):  # max_new_tokens
+                max_new_tokens = 2048
+                for i in range(max_new_tokens):
+                    # Check if we're approaching model's max length
+                    if input_ids.shape[1] >= 4000:  # Leave some buffer before 4096
+                        logger.warning(f"Approaching max sequence length ({input_ids.shape[1]}), stopping generation")
+                        break
+                    
                     if hasattr(self.model, 'model'):
                         outputs = self.model.model(input_ids, output_hidden_states=True)
                         hidden_states = outputs[0][:, -1, :]  # [batch, hidden_dim]
@@ -276,10 +282,11 @@ class LatentSeekOptimizer:
         prompt_inputs = self.tokenizer(prompt_text, return_tensors="pt").to(self.model.device)
         prompt_length = prompt_inputs.input_ids.shape[1]
         
-        # Calculate update length
-        generated_length = len(hidden_states_list) - prompt_length
-        update_length = min(int(self.k * generated_length), 300)
-        start_index = 0  # Start optimizing from beginning of generation
+        # Calculate update length from total hidden states (not just generated)
+        # This matches the original LatentSeek implementation
+        total_length = len(hidden_states_list)
+        update_length = min(int(self.k * total_length), 300)
+        start_index = 0  # Start optimizing from beginning
         
         if update_length <= 0:
             logger.warning("Update length is zero, returning initial output")
@@ -290,16 +297,30 @@ class LatentSeekOptimizer:
                 converged=False
             )
         
-        logger.info(f"Optimizing {update_length} out of {generated_length} generated tokens")
+        logger.info(f"Optimizing {update_length} tokens from position {start_index} to {actual_end}")
+        logger.info(f"Total hidden states: {len(hidden_states_list)}, Prompt length: {prompt_length}")
         
         # Create base_input_ids (prompt only, no accumulation!)
         base_input_ids = prompt_inputs.input_ids  # Just the prompt
         
-        # Extract hidden states to optimize (from the generated part only)
+        # Extract hidden states to optimize
+        # Following original LatentSeek: optimize from start_index
         model_device = next(self.model.parameters()).device
+        actual_end = min(start_index + update_length, len(hidden_states_list))
+        
+        # Ensure we have tokens to optimize
+        if start_index >= len(hidden_states_list):
+            logger.warning("Start index beyond hidden states length")
+            return OptimizationResult(
+                final_output=current_output,
+                reward_history=reward_history,
+                optimization_steps=0,
+                converged=False
+            )
+            
         optimized_hidden_states = torch.nn.Parameter(torch.stack([
             state.clone().detach().to(model_device).requires_grad_(True)
-            for state in hidden_states_list[prompt_length + start_index:prompt_length + start_index + update_length]
+            for state in hidden_states_list[start_index:actual_end]
         ]))  # Shape: [update_length, 1, hidden_dim]
         
         # Setup optimizer
