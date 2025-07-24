@@ -210,6 +210,10 @@ Input:
                 logger.warning(f"Retry {retry+1}: No code found")
                 continue
                 
+            # Log code preview for debugging
+            code_preview = code[:200] + "..." if len(code) > 200 else code
+            logger.debug(f"Retry {retry+1} - Extracted code preview: {code_preview}")
+            
             # Evaluate
             eval_result = self.evaluator.evaluate_solution(problem_id, code)
             rewards = self.calculate_5d_reward(
@@ -222,7 +226,9 @@ Input:
                 logger.info(f"Valid output found on retry {retry+1} with rewards: {rewards}")
                 return generated[0], code, rewards
                 
-            logger.warning(f"Retry {retry+1}: Code execution failed")
+            # Log more details about the failure
+            error_msg = eval_result.get('error', 'Unknown error')
+            logger.warning(f"Retry {retry+1}: Code execution failed - {error_msg}")
             
         # If all retries failed, return the last attempt
         logger.warning(f"All {self.max_retries} retries failed, using last attempt")
@@ -273,20 +279,43 @@ Input:
         
     def extract_code_from_response(self, response: str) -> str:
         """Extract Python code from model response"""
+        # First try to find code blocks
         code_pattern = r'```python(.*?)```'
         matches = re.findall(code_pattern, response, re.DOTALL)
         
         if matches:
-            return matches[-1].strip()
+            # Get the last code block and ensure it's complete
+            code = matches[-1].strip()
+            # If code seems truncated (doesn't end properly), try to complete it
+            if code and not code.rstrip().endswith(('\n', '}', ')', 'return')):
+                # Look for any additional code after the block
+                remaining = response.split('```')[-1]
+                if remaining:
+                    code += '\n' + remaining.strip()
+            return code
             
+        # If no code blocks, try to extract from plain text
         lines = response.split('\n')
         code_lines = []
         in_code = False
+        imports_found = False
         
         for line in lines:
-            if 'def main' in line or 'def transform' in line:
+            # Look for imports to start code extraction
+            if ('import' in line or 'from' in line) and not in_code:
+                imports_found = True
                 in_code = True
-            if in_code:
+                code_lines.append(line)
+            elif 'def main' in line or 'def transform' in line:
+                if not imports_found:
+                    # Add common imports if missing
+                    code_lines.insert(0, 'from common import *')
+                    code_lines.insert(1, 'import numpy as np')
+                    code_lines.insert(2, 'from typing import *')
+                    code_lines.insert(3, '')
+                in_code = True
+                code_lines.append(line)
+            elif in_code:
                 code_lines.append(line)
                 
         if code_lines:

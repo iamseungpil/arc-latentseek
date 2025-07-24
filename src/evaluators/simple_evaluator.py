@@ -50,16 +50,6 @@ class SimpleEvaluator:
                 "error": f"Problem {problem_id} not found"
             }
         
-        # Extract main function
-        func_match = re.search(r'def main\(.*?\):(.*?)(?=\n(?:def|$))', code, re.DOTALL)
-        if not func_match:
-            return {
-                "execution_success": False,
-                "generated_outputs": None,
-                "accuracy": 0.0,
-                "error": "No main function found"
-            }
-        
         # Try to execute on test pairs
         try:
             # Create exec environment
