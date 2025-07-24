@@ -94,21 +94,30 @@ class SimpleEvaluator:
                 
             main_func = exec_globals['main']
             
-            # Execute on test inputs
+            # Execute on test inputs using CodeExecutor
             generated_outputs = []
             for test_pair in problem.test_pairs:
-                try:
-                    output = main_func(test_pair.x)
-                    if not isinstance(output, np.ndarray):
-                        output = np.array(output)
-                    generated_outputs.append(output)
-                except Exception as e:
+                # Execute using CodeExecutor's execute_single method
+                output = self.executor.execute_single(code, test_pair.x)
+                
+                # Check if execution failed
+                if isinstance(output, str) and output.startswith("ERROR"):
                     return {
                         "execution_success": False,
                         "generated_outputs": None,
                         "accuracy": 0.0,
-                        "error": f"Error executing main: {str(e)}"
+                        "error": f"Error executing main: {output}"
                     }
+                    
+                if output is None:
+                    return {
+                        "execution_success": False,
+                        "generated_outputs": None,
+                        "accuracy": 0.0,
+                        "error": "main function returned None"
+                    }
+                    
+                generated_outputs.append(output)
             
             # Calculate accuracy
             correct = 0
