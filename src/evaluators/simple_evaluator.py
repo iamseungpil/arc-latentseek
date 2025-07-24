@@ -63,6 +63,8 @@ class SimpleEvaluator:
         # Try to execute on test pairs
         try:
             # Create exec environment
+            from typing import List, Tuple, Dict, Set, Optional, Union, Any
+            
             exec_globals = {
                 'np': np,
                 'numpy': np,
