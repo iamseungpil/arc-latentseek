@@ -8,6 +8,9 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 import re
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 try:
     from transformers import AutoProcessor, Glm4vForConditionalGeneration
@@ -16,7 +19,7 @@ except ImportError:
     from transformers import AutoProcessor, AutoModelForVision2Seq as Glm4vForConditionalGeneration
 
 from ..data import ARCProblem
-from ..generators import BARCOutput
+from ..generators.barc_generator_fixed import BARCOutput
 from ..executors import ExecutionResult, GridRenderer
 from .verifiers import Verifier, VerificationResult
 
@@ -36,8 +39,9 @@ class EvaluationResult:
 class GLMEvaluator:
     """Use GLM-4.1V to evaluate ARC solutions"""
     
-    def __init__(self, model_path: str = "THUDM/GLM-4.1V-9B-Thinking"):
+    def __init__(self, model_path: str = "THUDM/GLM-4.1V-9B-Thinking", device: str = "cuda"):
         self.model_path = model_path
+        self.device = device
         self.processor = None
         self.model = None
         self.renderer = GridRenderer()
@@ -48,17 +52,14 @@ class GLMEvaluator:
         """Load GLM model and processor"""
         print(f"Loading GLM model: {self.model_path}")
         self.processor = AutoProcessor.from_pretrained(self.model_path, use_fast=True)
-        # Get the first available CUDA device
-        import torch
-        if torch.cuda.is_available():
-            device_id = torch.cuda.current_device()
-        else:
-            device_id = 0
+        
+        # Always use device 0 when CUDA_VISIBLE_DEVICES is set
+        device_id = 0
             
         self.model = Glm4vForConditionalGeneration.from_pretrained(
             self.model_path,
             torch_dtype=torch.bfloat16,
-            device_map={"": device_id}  # Use current CUDA device
+            device_map={"": device_id}  # Use specified CUDA device
         )
         print("GLM model loaded successfully")
         

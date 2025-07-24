@@ -100,7 +100,7 @@ def run_experiment_on_problem(problem_id: str, problem: ARCProblem,
 
 def main():
     # Configuration
-    gpu_id = 5
+    gpu_id = 0  # When using CUDA_VISIBLE_DEVICES=5, we need to use cuda:0
     device = f"cuda:{gpu_id}"
     
     logger.info(f"Starting experiment on GPU {gpu_id}")
@@ -124,7 +124,7 @@ def main():
     generator.model = generator.model.to(device)
     
     executor = CodeExecutor()
-    evaluator = GLMEvaluator(device=device)
+    evaluator = GLMEvaluator()
     
     optimizer = FixedLatentSeekOptimizer(
         barc_generator=generator,
@@ -139,7 +139,10 @@ def main():
     # Load problems
     logger.info("Loading ARC problems...")
     data_loader = ARCDataLoader()
-    all_problems = data_loader.load_evaluation()
+    all_problems_list = data_loader.get_problems(split="validation")
+    
+    # Convert to dict format
+    all_problems = {p.uid: p for p in all_problems_list}
     
     # Select problems
     problem_ids = ["2a5f8217", "bf89d739", "feca6190"]

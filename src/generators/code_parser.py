@@ -30,23 +30,45 @@ def extract_code_elements(code: str) -> Tuple[Optional[str], Optional[str], Opti
     # Description extraction
     description = None
     
-    # Explicit description tag patterns
-    desc_tag_pattern = r'# description:\s*\n((?:#[^\n]*\n)+)'
-    desc_tag_match = re.search(desc_tag_pattern, code, re.DOTALL)
+    # Try multiple patterns for description
+    desc_patterns = [
+        # Multi-line format with # on each line
+        r'# description:\s*\n((?:#[^\n]*\n)+)',
+        # Single line format
+        r'# description:\s*(.*?)(?=\n|$)',
+        # Inline format (description on same line)
+        r'# description:\s*([^\n]+)',
+    ]
     
-    if desc_tag_match:
-        # Remove comment markers and join lines
-        desc_lines = re.findall(r'#\s*(.*?)$', desc_tag_match.group(1), re.MULTILINE)
-        description = ' '.join([line.strip() for line in desc_lines if line.strip()])
-    else:
-        # Look for comments after concepts
+    for pattern in desc_patterns:
+        desc_match = re.search(pattern, code, re.DOTALL)
+        if desc_match:
+            if pattern == desc_patterns[0]:  # Multi-line format
+                # Remove comment markers and join lines
+                desc_lines = re.findall(r'#\s*(.*?)$', desc_match.group(1), re.MULTILINE)
+                description = ' '.join([line.strip() for line in desc_lines if line.strip()])
+            else:  # Single line formats
+                description = desc_match.group(1).strip()
+            break
+    
+    # If no explicit description tag, look for comments after concepts
+    if not description:
         after_concepts_pattern = r'# concepts:.*?\n((?:#[^\n]*\n)+)'
         after_concepts_match = re.search(after_concepts_pattern, code, re.DOTALL)
         
         if after_concepts_match:
             desc_lines = re.findall(r'#\s*(.*?)$', after_concepts_match.group(1), re.MULTILINE)
-            description = ' '.join([line.strip() for line in desc_lines 
-                                  if line.strip() and not line.startswith('description:')])
+            # Check if first line contains "description:"
+            if desc_lines and 'description:' in desc_lines[0]:
+                # Extract description from the line
+                desc_text = desc_lines[0].split('description:', 1)[1].strip()
+                # Add any following lines
+                if len(desc_lines) > 1:
+                    desc_text += ' ' + ' '.join([line.strip() for line in desc_lines[1:] if line.strip()])
+                description = desc_text
+            else:
+                description = ' '.join([line.strip() for line in desc_lines 
+                                      if line.strip() and not line.startswith('description:')])
     
     # Plan extraction
     plan = None
@@ -77,9 +99,11 @@ def parse_code(response: str) -> List[str]:
         return [match.strip() for match in matches]
     
     # If no code blocks, look for def transform/main pattern
+    # Try to find the entire function definition including body
     def_patterns = [
-        r'(def transform.*?)(?=\n\n|\Z)',
-        r'(def main.*?)(?=\n\n|\Z)'
+        # Match def transform/main and everything until the next def, class, or end of string
+        r'(def transform\s*\([^)]*\):[^\n]*(?:\n(?!def\s|class\s).*)*)',
+        r'(def main\s*\([^)]*\):[^\n]*(?:\n(?!def\s|class\s).*)*)'
     ]
     
     for pattern in def_patterns:

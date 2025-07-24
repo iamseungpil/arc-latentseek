@@ -1,248 +1,258 @@
 """
-Multi-tensor GLM Evaluator based on CompressARC approach
-Evaluates code outputs across 5 dimensions
+Multi-tensor Evaluator based on CompressARC approach
+Evaluates code outputs across multiple dimensions without GLM
 """
 import torch
 import numpy as np
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
-from PIL import Image, ImageDraw, ImageFont
-import tempfile
-import os
+import ast
+import re
 
-from .glm_evaluator import GLMEvaluator, EvaluationResult
 from ..data import ARCProblem, ARCPair
-from ..executors import GridRenderer
-
-# ARC color palette
-COLORS = {
-    0: (0, 0, 0),        # Black
-    1: (0, 116, 217),    # Blue  
-    2: (255, 65, 54),    # Red
-    3: (46, 204, 64),    # Green
-    4: (255, 220, 0),    # Yellow
-    5: (128, 128, 128),  # Gray
-    6: (240, 18, 190),   # Magenta
-    7: (255, 133, 27),   # Orange
-    8: (0, 191, 255),    # Sky Blue
-    9: (149, 0, 58),     # Maroon
-}
+from ..generators.barc_generator_fixed import BARCOutput
+from ..executors import ExecutionResult
 
 
 @dataclass
 class MultiTensorResult:
     """Results from multi-tensor evaluation"""
-    example_accuracy: float  # Per-example accuracy
-    color_transformation: float  # Color mapping accuracy
-    spatial_transformation: float  # Spatial transformation accuracy
-    pattern_recognition: float  # Pattern recognition accuracy
-    structural_integrity: float  # Structure preservation accuracy
-    overall_score: float  # Weighted average
+    execution_reward: float       # Code runs without errors
+    accuracy_reward: float        # Correct outputs
+    code_quality_reward: float    # Code quality metrics
+    structure_reward: float       # Structural similarity
+    efficiency_reward: float      # Code efficiency
+    total_reward: float          # Weighted sum
     
     def to_dict(self) -> Dict[str, float]:
         return {
-            'example_accuracy': self.example_accuracy,
-            'color_transformation': self.color_transformation,
-            'spatial_transformation': self.spatial_transformation,
-            'pattern_recognition': self.pattern_recognition,
-            'structural_integrity': self.structural_integrity,
-            'overall_score': self.overall_score
+            'execution': self.execution_reward,
+            'accuracy': self.accuracy_reward,
+            'code_quality': self.code_quality_reward,
+            'structure': self.structure_reward,
+            'efficiency': self.efficiency_reward,
+            'total': self.total_reward
         }
 
 
-class MultiTensorEvaluator(GLMEvaluator):
-    """Multi-dimensional evaluator using GLM vision model"""
+class MultiTensorEvaluator:
+    """Multi-dimensional evaluator based on CompressARC"""
     
-    def __init__(self, model_name: str = "THUDM/GLM-4.1V-9B-Thinking"):
-        super().__init__(model_name)
-        self.renderer = GridRenderer()
-    
-    def evaluate_multitensor(
-        self, 
-        problem: ARCProblem, 
-        generated_outputs: List[np.ndarray]
-    ) -> MultiTensorResult:
-        """Evaluate using 5-dimensional multi-tensor approach"""
-        
-        # Create comparison image
-        image_path = self._create_comparison_image(problem, generated_outputs)
-        
-        # Prompt for multi-tensor evaluation
-        prompt = self._create_multitensor_prompt()
-        
-        # Get GLM evaluation
-        response = self._run_glm_inference(image_path, prompt)
-        
-        # Parse scores from response
-        # response is a string from _run_glm_inference
-        scores = self._parse_multitensor_scores(response)
-        
-        # Clean up temp image
-        if os.path.exists(image_path):
-            os.unlink(image_path)
-        
-        return scores
-    
-    def _create_comparison_image(
-        self, 
-        problem: ARCProblem, 
-        generated_outputs: List[np.ndarray]
-    ) -> str:
-        """Create comparison image showing input, expected, and generated outputs"""
-        
-        # Calculate dimensions
-        num_examples = len(problem.train_pairs)
-        grid_size = 100
-        padding = 20
-        
-        # Create large image
-        img_width = (3 * grid_size + 4 * padding)  # input, expected, generated + padding
-        img_height = num_examples * (grid_size + padding) + padding
-        
-        img = Image.new('RGB', (img_width, img_height), 'white')
-        draw = ImageDraw.Draw(img)
-        
-        # Try to load font, fall back to default if not available
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
-        except:
-            font = ImageFont.load_default()
-        
-        # Add headers
-        draw.text((padding, 5), "Input", fill='black', font=font)
-        draw.text((grid_size + 2*padding, 5), "Expected", fill='black', font=font)
-        draw.text((2*grid_size + 3*padding, 5), "Generated", fill='red', font=font)
-        
-        for i, (train_pair, gen_output) in enumerate(zip(problem.train_pairs, generated_outputs)):
-            y_offset = i * (grid_size + padding) + padding + 25
-            
-            # Input grid
-            input_img = self._create_grid_image(train_pair.x, grid_size)
-            img.paste(input_img, (padding, y_offset))
-            
-            # Expected output
-            expected_img = self._create_grid_image(train_pair.y, grid_size)
-            img.paste(expected_img, (grid_size + 2*padding, y_offset))
-            
-            # Generated output
-            gen_img = self._create_grid_image(gen_output, grid_size)
-            img.paste(gen_img, (2*grid_size + 3*padding, y_offset))
-        
-        # Save to temp file
-        temp_path = tempfile.mktemp(suffix='.png')
-        img.save(temp_path)
-        return temp_path
-    
-    def _create_grid_image(self, grid: np.ndarray, size: int) -> Image.Image:
-        """Create PIL image from numpy grid"""
-        cell_size = size // max(grid.shape)
-        img = Image.new('RGB', (size, size), 'white')
-        draw = ImageDraw.Draw(img)
-        
-        for i in range(grid.shape[0]):
-            for j in range(grid.shape[1]):
-                color = COLORS.get(grid[i, j], (255, 255, 255))
-                x1 = j * cell_size
-                y1 = i * cell_size
-                x2 = (j + 1) * cell_size
-                y2 = (i + 1) * cell_size
-                draw.rectangle([x1, y1, x2, y2], fill=color, outline='black')
-        
-        return img
-    
-    def _create_multitensor_prompt(self) -> str:
-        """Create prompt for multi-tensor evaluation"""
-        return """Analyze this ARC problem across 5 dimensions and provide scores as percentages (0-100%):
-
-1. EXAMPLE ACCURACY: How well does the generated output match the expected output for each training example?
-   - Look at pixel-by-pixel correspondence
-   - Consider overall pattern similarity
-
-2. COLOR TRANSFORMATION: How accurately are colors transformed from input to output?
-   - Color mapping correctness
-   - Color preservation where needed
-   - New color generation accuracy
-
-3. SPATIAL TRANSFORMATION: How well are spatial relationships handled?
-   - X-axis transformations (horizontal)
-   - Y-axis transformations (vertical) 
-   - Rotation/reflection accuracy
-   - Size/scale handling
-
-4. PATTERN RECOGNITION: How well are patterns identified and applied?
-   - Input pattern detection
-   - Rule application consistency
-   - Edge case handling
-
-5. STRUCTURAL INTEGRITY: How well is the overall structure preserved?
-   - Grid dimensions correctness
-   - Object boundary preservation
-   - Connectivity maintenance
-
-Provide your scores in this exact format:
-Example Accuracy: X%
-Color Transformation: Y%
-Spatial Transformation: Z%
-Pattern Recognition: W%
-Structural Integrity: V%
-
-Then provide a brief explanation of the main issues."""
-    
-    def _parse_multitensor_scores(self, explanation: str) -> MultiTensorResult:
-        """Parse scores from GLM explanation"""
-        scores = {
-            'example_accuracy': 0.0,
-            'color_transformation': 0.0,
-            'spatial_transformation': 0.0,
-            'pattern_recognition': 0.0,
-            'structural_integrity': 0.0
+    def __init__(self, 
+                 execution_weight: float = 0.2,
+                 accuracy_weight: float = 0.4,
+                 quality_weight: float = 0.15,
+                 structure_weight: float = 0.15,
+                 efficiency_weight: float = 0.1):
+        """Initialize with weights for different components"""
+        self.weights = {
+            'execution': execution_weight,
+            'accuracy': accuracy_weight,
+            'quality': quality_weight,
+            'structure': structure_weight,
+            'efficiency': efficiency_weight
         }
         
-        # Parse percentage scores
-        lines = explanation.split('\n')
-        for line in lines:
-            line = line.strip()
-            if 'Example Accuracy:' in line:
-                scores['example_accuracy'] = self._extract_percentage(line)
-            elif 'Color Transformation:' in line:
-                scores['color_transformation'] = self._extract_percentage(line)
-            elif 'Spatial Transformation:' in line:
-                scores['spatial_transformation'] = self._extract_percentage(line)
-            elif 'Pattern Recognition:' in line:
-                scores['pattern_recognition'] = self._extract_percentage(line)
-            elif 'Structural Integrity:' in line:
-                scores['structural_integrity'] = self._extract_percentage(line)
+        # Normalize weights
+        total = sum(self.weights.values())
+        self.weights = {k: v/total for k, v in self.weights.items()}
+    
+    def evaluate(self, 
+                problem: ARCProblem, 
+                barc_output: BARCOutput,
+                execution_result: ExecutionResult,
+                prefix: str = "") -> 'EvaluationResult':
+        """
+        Evaluate solution using multiple tensor components
         
-        # Calculate weighted average (structural integrity weighted higher)
-        weights = {
-            'example_accuracy': 0.3,
-            'color_transformation': 0.2,
-            'spatial_transformation': 0.2,
-            'pattern_recognition': 0.2,
-            'structural_integrity': 0.1
-        }
+        Args:
+            problem: The ARC problem
+            barc_output: Generated solution
+            execution_result: Result from code execution
+            prefix: Prefix for logging (unused but kept for compatibility)
+            
+        Returns:
+            EvaluationResult with multi-tensor rewards
+        """
+        # 1. Execution reward (binary: 0 or 1)
+        execution_reward = 1.0 if execution_result.success else 0.0
         
-        overall_score = sum(scores[key] * weights[key] for key in scores.keys())
+        # 2. Accuracy reward (percentage of correct outputs)
+        accuracy_reward = execution_result.accuracy
         
-        return MultiTensorResult(
-            example_accuracy=scores['example_accuracy'],
-            color_transformation=scores['color_transformation'],
-            spatial_transformation=scores['spatial_transformation'],
-            pattern_recognition=scores['pattern_recognition'],
-            structural_integrity=scores['structural_integrity'],
-            overall_score=overall_score
+        # 3. Code quality reward
+        code_quality_reward = self._evaluate_code_quality(barc_output.code)
+        
+        # 4. Structure reward (output structure similarity)
+        structure_reward = self._evaluate_structure_similarity(
+            problem, execution_result
+        )
+        
+        # 5. Efficiency reward (code length and complexity)
+        efficiency_reward = self._evaluate_efficiency(barc_output.code)
+        
+        # Calculate total reward
+        total_reward = (
+            self.weights['execution'] * execution_reward +
+            self.weights['accuracy'] * accuracy_reward +
+            self.weights['quality'] * code_quality_reward +
+            self.weights['structure'] * structure_reward +
+            self.weights['efficiency'] * efficiency_reward
+        )
+        
+        # Create result
+        result = MultiTensorResult(
+            execution_reward=execution_reward,
+            accuracy_reward=accuracy_reward,
+            code_quality_reward=code_quality_reward,
+            structure_reward=structure_reward,
+            efficiency_reward=efficiency_reward,
+            total_reward=total_reward
+        )
+        
+        # Return as EvaluationResult for compatibility
+        from .glm_evaluator import EvaluationResult
+        return EvaluationResult(
+            total_reward=total_reward,
+            component_scores=result.to_dict(),
+            verifications={},  # Not used in multitensor
+            detailed_feedback={
+                'execution': f"Code execution: {'Success' if execution_reward > 0 else 'Failed'}",
+                'accuracy': f"Accuracy: {accuracy_reward:.1%}",
+                'quality': f"Code quality score: {code_quality_reward:.2f}",
+                'structure': f"Structure similarity: {structure_reward:.2f}",
+                'efficiency': f"Efficiency score: {efficiency_reward:.2f}"
+            }
         )
     
-    def _extract_percentage(self, text: str) -> float:
-        """Extract percentage from text like 'Score: 75%'"""
-        import re
-        match = re.search(r'(\d+(?:\.\d+)?)%', text)
-        if match:
-            return float(match.group(1))
-        return 0.0
-
-
-def convert_multitensor_to_reward(result: MultiTensorResult) -> float:
-    """Convert multi-tensor result to reward value (negative for minimization)"""
-    # Convert percentage to negative reward (higher percentage = less negative reward)
-    return -(100.0 - result.overall_score) / 100.0
+    def _evaluate_code_quality(self, code: str) -> float:
+        """
+        Evaluate code quality based on:
+        - Proper function definition
+        - Use of numpy operations
+        - Proper error handling
+        - Code organization
+        """
+        score = 0.0
+        
+        # Check for proper function definition
+        if 'def transform(' in code:
+            score += 0.2
+        
+        # Check for numpy usage (efficient operations)
+        numpy_ops = ['np.', 'numpy.', 'array', 'ndarray']
+        if any(op in code for op in numpy_ops):
+            score += 0.2
+            
+        # Check for proper imports
+        if 'import numpy' in code or 'from numpy' in code:
+            score += 0.1
+            
+        # Check for comments/documentation
+        if code.count('#') > 0 or '"""' in code:
+            score += 0.1
+            
+        # Check for proper structure (not too nested)
+        try:
+            tree = ast.parse(code)
+            max_depth = self._get_max_depth(tree)
+            if max_depth < 5:
+                score += 0.2
+            elif max_depth < 7:
+                score += 0.1
+        except:
+            pass
+            
+        # Check for error handling
+        if 'try:' in code or 'except' in code:
+            score += 0.1
+            
+        # Check for type hints or docstrings
+        if '->' in code or '"""' in code:
+            score += 0.1
+            
+        return min(score, 1.0)
+    
+    def _get_max_depth(self, node, depth=0):
+        """Get maximum nesting depth of AST"""
+        max_d = depth
+        for child in ast.iter_child_nodes(node):
+            max_d = max(max_d, self._get_max_depth(child, depth + 1))
+        return max_d
+    
+    def _evaluate_structure_similarity(self, 
+                                     problem: ARCProblem,
+                                     execution_result: ExecutionResult) -> float:
+        """
+        Evaluate how well the output structure matches expected:
+        - Correct dimensions
+        - Valid color values
+        - Pattern consistency
+        """
+        if not execution_result.output_grids:
+            return 0.0
+            
+        total_score = 0.0
+        count = 0
+        
+        for i, (pair, output_grid) in enumerate(zip(problem.train_pairs, execution_result.output_grids)):
+            if isinstance(output_grid, np.ndarray):
+                score = 0.0
+                expected = pair.y
+                
+                # Check dimensions match
+                if output_grid.shape == expected.shape:
+                    score += 0.4
+                    
+                # Check valid color range
+                if output_grid.min() >= 0 and output_grid.max() <= 9:
+                    score += 0.3
+                else:
+                    # Partial credit if mostly valid
+                    valid_ratio = np.sum((output_grid >= 0) & (output_grid <= 9)) / output_grid.size
+                    score += 0.3 * valid_ratio
+                    
+                # Check if output is not trivial (all same color)
+                if len(np.unique(output_grid)) > 1:
+                    score += 0.3
+                elif len(np.unique(output_grid)) == len(np.unique(expected)):
+                    score += 0.15  # Partial credit if at least same diversity
+                    
+                total_score += score
+                count += 1
+                
+        return total_score / count if count > 0 else 0.0
+    
+    def _evaluate_efficiency(self, code: str) -> float:
+        """
+        Evaluate code efficiency:
+        - Reasonable length
+        - Not overly complex
+        - Uses efficient operations
+        """
+        score = 0.0
+        
+        # Penalize very short or very long code
+        lines = [l.strip() for l in code.split('\n') if l.strip() and not l.strip().startswith('#')]
+        num_lines = len(lines)
+        
+        if 5 <= num_lines <= 30:
+            score += 0.4
+        elif 3 <= num_lines <= 50:
+            score += 0.2
+            
+        # Check for efficient numpy operations vs loops
+        loop_count = code.count('for ') + code.count('while ')
+        numpy_count = code.count('np.') + code.count('numpy.')
+        
+        if numpy_count > loop_count:
+            score += 0.3
+        elif numpy_count > 0:
+            score += 0.15
+            
+        # Check for vectorized operations
+        vectorized_ops = ['reshape', 'transpose', 'flatten', 'where', 'argmax', 'argmin']
+        if any(op in code for op in vectorized_ops):
+            score += 0.3
+            
+        return min(score, 1.0)

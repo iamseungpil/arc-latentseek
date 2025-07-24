@@ -10,14 +10,10 @@ from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass, field
 import logging
 
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent.parent))
-
-from src.data import ARCProblem
-from src.generators import BARCGenerator, BARCOutput
-from src.executors import CodeExecutor
-from src.evaluators import GLMEvaluator, EvaluationResult
+from ..data import ARCProblem
+from ..generators.barc_generator_fixed import BARCGeneratorFixed, BARCOutput
+from ..executors import CodeExecutor
+from ..evaluators import GLMEvaluator, EvaluationResult
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +31,7 @@ class FixedLatentSeekOptimizer:
     """Fixed LatentSeek optimizer with proper indexing and no token accumulation"""
     
     def __init__(self,
-                 barc_generator: BARCGenerator,
+                 barc_generator: BARCGeneratorFixed,
                  code_executor: CodeExecutor,
                  glm_evaluator: GLMEvaluator,
                  lr: float = 0.03,
@@ -184,16 +180,33 @@ class FixedLatentSeekOptimizer:
             # Decode the complete sequence (skip prompt)
             generated_text = self.tokenizer.decode(input_ids[0][prompt_length:], skip_special_tokens=True)
             
-            # Extract code from generated text
-            code = self._extract_code_from_text(generated_text)
-            description = self._extract_description_from_text(generated_text)
+            # Use the same parser as the generator
+            from ..generators.code_parser import extract_code_elements, parse_code
+            
+            # Extract code using the improved parser
+            code_blocks = parse_code(generated_text)
+            code = code_blocks[0] if code_blocks else ""
+            
+            # If no code found in blocks, try to extract from the whole response
+            if not code:
+                if "def transform" in generated_text:
+                    # Extract everything from "def transform" to the end
+                    start = generated_text.find("def transform")
+                    code = generated_text[start:] if start != -1 else ""
+                elif "def main" in generated_text:
+                    # Extract everything from "def main" to the end
+                    start = generated_text.find("def main")
+                    code = generated_text[start:] if start != -1 else ""
+            
+            # Extract concepts, description, plan
+            concepts, description, plan = extract_code_elements(generated_text)
             
             if code:
                 return BARCOutput(
                     code=code,
                     description=description,
-                    concepts=None,
-                    plan=None,
+                    concepts=concepts,
+                    plan=plan,
                     raw_response=generated_text
                 )
             else:
