@@ -62,6 +62,7 @@ class LatentSeekOptimizerV2:
         self.k = k
         self.reward_threshold = reward_threshold
         self.use_policy_gradient = use_policy_gradient
+        self.temperature = 1.0  # Add missing temperature parameter
         
         # Cache model and tokenizer
         self.model = barc_generator.model
@@ -168,12 +169,45 @@ class LatentSeekOptimizerV2:
         logger.info(f"Optimizing {update_length} tokens from position {start_index}")
         logger.info(f"Total: {len(hidden_states_list)}, Prompt: {prompt_length}, Generated: {generated_length}")
         
-        # Extract hidden states to optimize
+        # Filter out # tokens from optimization in description area
+        optimizable_indices = []
+        hash_token_id = self.tokenizer.encode('#', add_special_tokens=False)[0]
+        
+        for i in range(start_index, min(start_index + update_length, len(hidden_states_list))):
+            token_id = initial_input_ids[0][i].item()
+            if token_id != hash_token_id:  # Skip # tokens
+                optimizable_indices.append(i)
+        
+        if not optimizable_indices:
+            logger.warning("No optimizable tokens found (all are # tokens)!")
+            return OptimizationResult(
+                final_output=initial_output,
+                reward_history=[initial_reward],
+                optimization_steps=0,
+                converged=False
+            )
+        
+        logger.info(f"Filtered out # tokens: optimizing {len(optimizable_indices)} out of {update_length} tokens")
+        
+        # Extract hidden states to optimize (excluding # tokens)
         device = next(self.model.parameters()).device
         optimized_hidden_states = torch.nn.Parameter(torch.stack([
             hidden_states_list[i].clone().detach().to(device).requires_grad_(True)
-            for i in range(start_index, min(start_index + update_length, len(hidden_states_list)))
+            for i in optimizable_indices
         ]))
+        
+        # Store mapping for reconstruction
+        self.optimizable_indices = optimizable_indices
+        self.start_index = start_index
+        self.end_index = min(start_index + update_length, len(hidden_states_list))
+        
+        # Store description token positions for logging
+        if match:  # If description was found
+            desc_start = prompt_length + desc_start_tok if desc_start_tok is not None else None
+            desc_end = prompt_length + desc_end_tok if desc_end_tok is not None else None
+        else:
+            desc_start = None
+            desc_end = None
         
         # Setup optimizer
         optimizer = torch.optim.Adam([optimized_hidden_states], lr=self.lr)
@@ -204,25 +238,36 @@ class LatentSeekOptimizerV2:
             optimizer.zero_grad()
             
             # Get logits from optimized hidden states
-            logits = self.model.lm_head(optimized_hidden_states)  # [update_length, hidden_dim] -> [update_length, vocab_size]
+            logits = self.model.lm_head(optimized_hidden_states)
+            logger.info(f"Logits shape: {logits.shape}, Optimized hidden states shape: {optimized_hidden_states.shape}")
             
             if self.use_policy_gradient:
                 # Policy gradient loss (like original LatentSeek)
-                probs = torch.softmax(logits, dim=-1) + 1e-8
-                next_token_ids = torch.argmax(probs, dim=-1)
+                probs = torch.softmax(logits / self.temperature, dim=-1) + 1e-8
+                logger.info(f"Probs shape before fixing: {probs.shape}")
+                
+                # Ensure probs is 2D for multinomial
+                if len(probs.shape) == 3:
+                    probs = probs.squeeze(1)  # [batch, 1, vocab] -> [batch, vocab]
+                elif len(probs.shape) == 1:
+                    probs = probs.unsqueeze(0)  # [vocab] -> [1, vocab]
+                    
+                logger.info(f"Probs shape after fixing: {probs.shape}")
+                next_token_ids = torch.multinomial(probs, 1).squeeze(-1)
                 
                 # Handle different tensor shapes
-                if len(probs.shape) == 3:  # [update_length, 1, vocab_size]
-                    log_probs = torch.log(probs[torch.arange(update_length), 0, next_token_ids] + 1e-10)
-                else:  # [update_length, vocab_size]
-                    log_probs = torch.log(probs[torch.arange(update_length), next_token_ids] + 1e-10)
+                num_optimizable = len(self.optimizable_indices)
+                if len(probs.shape) == 3:  # [num_optimizable, 1, vocab_size]
+                    log_probs = torch.log(probs[torch.arange(num_optimizable), 0, next_token_ids] + 1e-10)
+                else:  # [num_optimizable, vocab_size]
+                    log_probs = torch.log(probs[torch.arange(num_optimizable), next_token_ids] + 1e-10)
                 
                 loss = -current_reward * log_probs.sum()
             else:
                 # Direct loss optimization (for MultiTensor)
                 # Generate and evaluate to get loss
                 new_output = self._generate_from_optimized(
-                    problem, optimized_hidden_states, original_seq, base_input_ids
+                    problem, optimized_hidden_states, original_seq, base_input_ids, initial_input_ids
                 )
                 
                 if new_output and new_output.code:
@@ -253,7 +298,7 @@ class LatentSeekOptimizerV2:
             # Generate new answer (following original approach exactly)
             with torch.no_grad():
                 new_output = self._generate_from_optimized(
-                    problem, optimized_hidden_states, original_seq, base_input_ids
+                    problem, optimized_hidden_states, original_seq, base_input_ids, initial_input_ids
                 )
                 
                 if new_output and new_output.code:
@@ -274,7 +319,21 @@ class LatentSeekOptimizerV2:
                         current_reward = result.accuracy
                     
                     logger.info(f"Step {step + 1}: reward = {current_reward:.3f}, accuracy = {result.accuracy:.1%}")
-                    logger.info(f"  Description: {new_output.description}")
+                    
+                    # Log actual optimized tokens every 5 steps (like V19)
+                    if step % 5 == 0 and desc_start is not None and desc_end is not None:
+                        # Get the actual tokens being optimized
+                        with torch.no_grad():
+                            desc_logits = self.model.lm_head(optimized_hidden_states)
+                            if len(desc_logits.shape) == 3:
+                                desc_logits = desc_logits.squeeze(1)
+                            desc_probs = torch.softmax(desc_logits / self.temperature, dim=-1)
+                            desc_tokens = torch.argmax(desc_probs, dim=-1)
+                            # Convert to list if tensor, ensure it's a flat list of integers
+                            if isinstance(desc_tokens, torch.Tensor):
+                                desc_tokens = desc_tokens.flatten().tolist()
+                            desc_text = self.tokenizer.decode(desc_tokens)
+                            logger.info(f"  Step {step} description preview: {desc_text[:100]}...")
                     
                     # Log output comparison
                     if result.output_grids and problem.train_pairs:
@@ -314,7 +373,8 @@ class LatentSeekOptimizerV2:
                                 problem: ARCProblem,
                                 optimized_hidden: torch.Tensor,
                                 original_seq: List[int],
-                                base_input_ids: torch.Tensor) -> Optional[BARCOutput]:
+                                base_input_ids: torch.Tensor,
+                                initial_input_ids: torch.Tensor) -> Optional[BARCOutput]:
         """
         Generate following original LatentSeek approach exactly
         """
@@ -327,19 +387,38 @@ class LatentSeekOptimizerV2:
                 original_tokens = torch.tensor([original_seq], device=input_ids.device, dtype=torch.long)
                 input_ids = torch.cat([input_ids, original_tokens], dim=-1)
             
-            # Add optimized tokens
+            # Reconstruct tokens with optimized hidden states (preserving # tokens)
             with torch.no_grad():
                 # Get tokens from optimized hidden states
                 logits = self.model.lm_head(optimized_hidden)
                 
-                # Handle different shapes
-                if len(logits.shape) == 3:  # [update_length, 1, vocab_size]
-                    next_tokens = torch.argmax(logits, dim=-1).squeeze(-1)  # [update_length]
-                else:  # [update_length, vocab_size]
-                    next_tokens = torch.argmax(logits, dim=-1)  # [update_length]
+                # Sample optimized tokens
+                if len(logits.shape) == 3:
+                    probs = torch.softmax(logits / self.temperature, dim=-1)
+                    optimized_tokens = torch.multinomial(probs.view(-1, probs.shape[-1]), 1).squeeze(-1)
+                else:
+                    probs = torch.softmax(logits / self.temperature, dim=-1) 
+                    optimized_tokens = torch.multinomial(probs, 1).squeeze(-1)
                 
-                next_tokens = next_tokens.unsqueeze(0)  # [1, update_length]
-                input_ids = torch.cat([input_ids, next_tokens], dim=-1)
+                # Get original full sequence
+                original_full_ids = initial_input_ids[0].tolist()
+                reconstructed_tokens = original_full_ids.copy()
+                
+                # Place optimized tokens back in their correct positions
+                opt_idx = 0
+                for i, abs_idx in enumerate(self.optimizable_indices):
+                    if abs_idx < len(reconstructed_tokens):
+                        reconstructed_tokens[abs_idx] = optimized_tokens[opt_idx].item()
+                        opt_idx += 1
+                    else:
+                        logger.warning(f"Index {abs_idx} out of range for reconstructed_tokens length {len(reconstructed_tokens)}")
+                        break
+                
+                # Convert to tensor and set as input_ids
+                input_ids = torch.tensor([reconstructed_tokens], device=base_input_ids.device, dtype=torch.long)
+                
+                # Log reconstruction info
+                logger.debug(f"Reconstructed sequence length: {len(reconstructed_tokens)}, optimized {opt_idx} tokens")
             
             # Generate the rest autoregressively
             max_new_tokens = min(800, 4096 - input_ids.shape[1])
@@ -351,7 +430,8 @@ class LatentSeekOptimizerV2:
                     outputs = self.model.model(input_ids, output_hidden_states=True)
                     hidden_states = outputs[0][:, -1]  # Last hidden state
                     logits = self.model.lm_head(hidden_states)
-                    next_token_id = torch.argmax(logits, dim=-1, keepdim=True)
+                    probs = torch.softmax(logits / self.temperature, dim=-1)
+                    next_token_id = torch.multinomial(probs, 1)
                     
                     input_ids = torch.cat([input_ids, next_token_id], dim=-1)
                     

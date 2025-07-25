@@ -377,12 +377,37 @@ Input:
         
         logger.info(f"Description found at tokens [{desc_start}:{desc_end}] ({desc_end - desc_start} tokens)")
         
-        # Create optimizable parameters
-        update_length = desc_end - desc_start
+        # Filter out # tokens from optimization in description area
+        optimizable_indices = []
+        hash_token_id = self.tokenizer.encode('#', add_special_tokens=False)[0]
+        
+        for i in range(desc_start, desc_end):
+            token_id = initial_ids[i].item()
+            if token_id != hash_token_id:  # Skip # tokens
+                optimizable_indices.append(i)
+        
+        if not optimizable_indices:
+            logger.warning("No optimizable tokens found in description (all are # tokens)!")
+            return {
+                "success": True,
+                "final_code": initial_code,
+                "final_accuracy": initial_rewards["example_accuracy"],
+                "final_rewards": initial_rewards,
+                "initial_rewards": initial_rewards,
+                "history": [{"step": 0, "rewards": initial_rewards}],
+                "num_steps": 0
+            }
+        
+        logger.info(f"Filtered out # tokens: optimizing {len(optimizable_indices)} out of {desc_end - desc_start} tokens")
+        
+        # Create optimizable parameters (excluding # tokens)
         optimized_hidden_states = torch.nn.Parameter(torch.stack(
-            [state.clone().detach().requires_grad_(True) 
-             for state in hidden_states_list[desc_start:desc_end]]
+            [hidden_states_list[i].clone().detach().requires_grad_(True) 
+             for i in optimizable_indices]
         ))
+        
+        # Store mapping for reconstruction
+        update_length = len(optimizable_indices)
         
         # Configure optimizer
         optimizer = torch.optim.Adam([optimized_hidden_states], lr=self.lr)
@@ -408,10 +433,21 @@ Input:
             next_token_ids = torch.multinomial(probs, 1).squeeze(-1)
             log_pi = torch.log(probs[torch.arange(update_length), next_token_ids] + 1e-10)
             
+            # Reconstruct the description section with optimized tokens (preserving # tokens)
+            reconstructed_desc = initial_ids[desc_start:desc_end].clone()
+            
+            # Place optimized tokens back in their correct positions
+            opt_idx = 0
+            for i, abs_idx in enumerate(range(desc_start, desc_end)):
+                if abs_idx in optimizable_indices:
+                    reconstructed_desc[i] = next_token_ids[opt_idx]
+                    opt_idx += 1
+                # Keep original token (# tokens) - no change needed
+            
             # Construct sequence up to description end
             updated_ids = torch.cat([
                 prefix_ids,
-                next_token_ids
+                reconstructed_desc
             ])
             
             # Continue generation from description end point
@@ -474,7 +510,9 @@ Input:
                 
             # Log sample of optimized description
             if step % 5 == 0:
-                desc_tokens = next_token_ids.tolist()
+                desc_tokens = next_token_ids
+                if isinstance(desc_tokens, torch.Tensor):
+                    desc_tokens = desc_tokens.flatten().tolist()
                 desc_text = self.tokenizer.decode(desc_tokens)
                 logger.info(f"Step {step} description preview: {desc_text[:100]}...")
                 
