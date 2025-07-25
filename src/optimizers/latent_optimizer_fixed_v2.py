@@ -9,6 +9,7 @@ import numpy as np
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
 import logging
+import re
 
 from ..data import ARCProblem
 from ..generators.barc_generator_fixed import BARCGeneratorFixed, BARCOutput
@@ -111,10 +112,49 @@ class LatentSeekOptimizerV2:
         full_tokens = self.tokenizer(full_text, return_tensors="pt").to(self.model.device)
         initial_input_ids = full_tokens.input_ids
         
-        # Calculate update length (IMPORTANT: based on generated length only, not including prompt)
+        # Calculate generated length first
         generated_length = len(hidden_states_list) - prompt_length
-        update_length = min(int(self.k * generated_length), 300)
-        start_index = prompt_length  # Start right after prompt
+        
+        # Find description range in the generated response
+        generated_text = initial_output.raw_response
+        desc_pattern = r'#\s*description:\s*\n((?:#[^\n]*\n)*)'
+        match = re.search(desc_pattern, generated_text)
+        
+        if match:
+            # Found description, calculate token positions
+            desc_start_char = match.start()
+            desc_end_char = match.end()
+            
+            # Convert character positions to token positions
+            current_pos = 0
+            desc_start_tok = None
+            desc_end_tok = None
+            
+            generated_token_ids = initial_input_ids[0][prompt_length:].tolist()
+            for i, token_id in enumerate(generated_token_ids):
+                token_text = self.tokenizer.decode([token_id])
+                if desc_start_tok is None and current_pos + len(token_text) > desc_start_char:
+                    desc_start_tok = i
+                if desc_end_tok is None and current_pos >= desc_end_char:
+                    desc_end_tok = i
+                    break
+                current_pos += len(token_text)
+            
+            if desc_start_tok is not None and desc_end_tok is not None:
+                # Use description tokens
+                start_index = prompt_length + desc_start_tok
+                update_length = desc_end_tok - desc_start_tok
+                logger.info(f"Found description at tokens [{desc_start_tok}:{desc_end_tok}] ({update_length} tokens)")
+            else:
+                # Fallback to original method
+                logger.warning("Could not determine description token range, using default 20%")
+                update_length = min(int(self.k * generated_length), 300)
+                start_index = prompt_length
+        else:
+            # No description found, use original method
+            logger.warning("No description found in generated code, using default 20%")
+            update_length = min(int(self.k * generated_length), 300)
+            start_index = prompt_length
         
         if update_length <= 0:
             logger.warning("Update length is zero!")

@@ -55,7 +55,7 @@ def run_glm_experiment(
         lr=0.03,
         max_steps=20,
         k=0.2,
-        reward_threshold=-0.2,  # GLM uses negative rewards
+        reward_threshold=0.95,  # Higher threshold to allow more optimization steps
         use_policy_gradient=True  # Use policy gradient for GLM
     )
     
@@ -216,7 +216,7 @@ def run_glm_experiment(
 if __name__ == "__main__":
     # Set CUDA device
     import os
-    os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "5"
     
     run_glm_experiment(
         num_problems=5,  # Start with 5 problems for testing
