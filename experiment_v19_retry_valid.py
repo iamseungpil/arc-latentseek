@@ -52,10 +52,9 @@ def run_v19_experiment(
         
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        device_map=device,
         torch_dtype=torch.bfloat16,
         trust_remote_code=True
-    )
+    ).to(device)
     
     # Initialize evaluator
     evaluator = SimpleEvaluator()
@@ -213,4 +212,6 @@ def run_v19_experiment(
 
 if __name__ == "__main__":
     # Run experiment on GPU 5
-    run_v19_experiment(device="cuda:5")
+    import os
+    os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+    run_v19_experiment(device="cuda")

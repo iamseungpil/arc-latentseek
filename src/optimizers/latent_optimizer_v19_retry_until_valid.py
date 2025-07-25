@@ -239,11 +239,11 @@ Input:
         hidden_states_list = []
         
         with torch.no_grad():
-            outputs = self.model(
+            outputs = self.model.model(
                 input_ids=input_ids.unsqueeze(0) if input_ids.dim() == 1 else input_ids,
                 output_hidden_states=True
             )
-            last_hidden_states = outputs.hidden_states[-1]
+            last_hidden_states = outputs[0]
             
             for i in range(last_hidden_states.size(1)):
                 hidden_states_list.append(last_hidden_states[0, i, :].clone())

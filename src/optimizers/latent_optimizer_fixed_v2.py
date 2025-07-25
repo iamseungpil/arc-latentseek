@@ -348,8 +348,8 @@ class LatentSeekOptimizerV2:
                 cnt = 0
                 while cnt < max_new_tokens:
                     # Get model output
-                    outputs = self.model(input_ids, output_hidden_states=True)
-                    hidden_states = outputs.hidden_states[-1][:, -1]  # Last hidden state
+                    outputs = self.model.model(input_ids, output_hidden_states=True)
+                    hidden_states = outputs[0][:, -1]  # Last hidden state
                     logits = self.model.lm_head(hidden_states)
                     next_token_id = torch.argmax(logits, dim=-1, keepdim=True)
                     

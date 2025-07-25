@@ -186,14 +186,14 @@ Here are the input and output grids for the training examples:
         
         # Get hidden states
         with torch.no_grad():
-            outputs = self.model(
+            outputs = self.model.model(
                 **inputs,
                 output_hidden_states=True,
                 return_dict=True
             )
         
         # Extract hidden states from last layer
-        last_hidden_states = outputs.hidden_states[-1]  # [batch_size, seq_len, hidden_dim]
+        last_hidden_states = outputs[0]  # [batch_size, seq_len, hidden_dim]
         
         # Convert to list of tensors for each token
         hidden_states_list = []
